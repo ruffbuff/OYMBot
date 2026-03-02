@@ -1,4 +1,4 @@
-# 🏢 AI Office Platform
+# 🏢 AI Office Platform v0.1.0
 
 Визуальная платформа для управления AI агентами с 2D офисной визуализацией.
 
@@ -30,8 +30,6 @@ aipanel/
 
 ## 🚀 Быстрый Старт
 
-**Для новых пользователей:** См. [SETUP.md](SETUP.md)
-
 ### 1. Onboarding
 
 ```bash
@@ -40,7 +38,11 @@ npm install
 npm run onboard
 ```
 
-Выбери LLM провайдер и создай первого агента.
+Выбери LLM провайдер:
+- **OpenRouter** (рекомендуется - бесплатно!)
+- OpenAI
+- Ollama (локально)
+- Anthropic
 
 ### 2. Установи Frontend
 
@@ -67,41 +69,57 @@ npm run dev
 
 ---
 
-## 📁 Структура
-
-```
-aipanel/
-├── .env.example        # Шаблон (коммитится)
-├── .env                # Твои ключи (НЕ коммитится!)
-│
-├── backend/
-│   ├── agents.example/ # Шаблоны (коммитится)
-│   ├── agents/         # Твои агенты (НЕ коммитится!)
-│   └── src/            # Код
-│
-└── frontend/
-    └── ...
-```
-
-**Важно:** `backend/agents/` не попадает в git!
+## 🌐 OpenRout
+**Браузер:** http://localhost:3000
 
 ---
 
-## 🌐 OpenRouter (Бесплатно!)
+## 🌐 OpenRouter (Рекомендуется)
 
-1. Получи ключ: https://openrouter.ai/keys
-2. Бесплатные модели:
-   - `meta-llama/llama-3-8b-instruct:free`
-   - `google/gemini-flash-1.5:free`
-   - `mistralai/mistral-7b-instruct:free`
+Бесплатный тариф без кредитной карты:
+- Получи ключ: https://openrouter.ai/keys
+- Бесплатные модели: `meta-llama/llama-3-8b-instruct:free`
 
----
-
-## 🦙 Ollama (Локально)
+### 3. Установи Зависимости
 
 ```bash
-# Установи
+# Backend
+cd backend
+npm install
+
+# Frontend
+cd ../frontend
+npm install
+```
+
+### 4. Запусти
+
+**Терминал 1 (Backend):**
+```bash
+cd backend
+npm run dev
+```
+
+**Терминал 2 (Frontend):**
+```bash
+cd frontend
+npm run dev
+```
+
+**Браузер:** http://localhost:3000
+
+## 📋 Требования
+
+- Node.js 18+
+- npm или yarn
+- OpenAI API ключ ИЛИ Ollama (локально)
+
+### Для Ollama (опционально):
+
+```bash
+# Установи Ollama
 brew install ollama  # macOS
+# или скачай с https://ollama.ai
 
 # Запусти
 ollama serve
@@ -110,17 +128,16 @@ ollama serve
 ollama pull llama2
 ```
 
----
-
 ## 🎮 Возможности
 
-### MVP (Текущая Версия)
+### Текущая Версия (MVP)
 - ✅ 2D визуализация офиса
-- ✅ Агенты с анимациями
-- ✅ WebSocket связь
-- ✅ File-first архитектура
-- ✅ OpenRouter/OpenAI/Ollama
-- ✅ Интерактивный onboarding
+- ✅ Агенты с анимациями (idle, thinking, working, error, offline)
+- ✅ WebSocket связь frontend-backend
+- ✅ File-first архитектура (markdown файлы)
+- ✅ Поддержка OpenAI и Ollama
+- ✅ Система энергии агентов
+- ✅ Тестовые кнопки (Send Request, Load Spike, Error, Panic)
 
 ### В Разработке
 - 🔄 Telegram интеграция
@@ -128,35 +145,64 @@ ollama pull llama2
 - 🔄 UI для создания агентов
 - 🔄 Система скиллов
 - 🔄 MCP интеграция
-
----
+- 🔄 Оптимизация токенов
+- 🔄 Docker изоляция
 
 ## 🛠️ Tech Stack
 
-**Backend:**
+### Backend
 - Node.js + TypeScript
-- Express.js + Socket.io
+- Express.js
+- Socket.io (WebSocket)
 - OpenAI SDK
-- Winston (логи)
+- Winston (логирование)
+- Gray-matter (markdown parsing)
 
-**Frontend:**
-- Next.js 14
+### Frontend
+- Next.js 14 (App Router)
 - TypeScript
 - Tailwind CSS
 - shadcn/ui
-- Zustand
-- Framer Motion
+- Zustand (state)
+- Framer Motion (анимации)
+- Socket.io-client
 
----
+## 📖 Документация
+
+- **[БЫСТРЫЙ_СТАРТ.md](БЫСТРЫЙ_СТАРТ.md)** - Подробная инструкция на русском
+- **[ГОТОВО_К_ТЕСТУ.md](ГОТОВО_К_ТЕСТУ.md)** - Краткая сводка перед тестом
+- **[FIRST_TEST.md](FIRST_TEST.md)** - Testing guide (English)
+- **[CHECKLIST.md](CHECKLIST.md)** - Pre-launch checklist
+- **[backend/QUICKSTART.md](backend/QUICKSTART.md)** - Backend setup
+- **[.kiro/specs/](. kiro/specs/)** - Полная спецификация проекта
+
+## 🔒 Безопасность
+
+### Что НЕ коммитится в Git:
+- ✅ `.env` файлы (содержат API ключи)
+- ✅ `node_modules/`
+- ✅ `logs/` (логи backend)
+- ✅ `dist/`, `build/` (скомпилированный код)
+- ✅ `.next/` (Next.js build)
+
+### Что коммитится:
+- ✅ `.env.example` (шаблон без ключей)
+- ✅ Исходный код
+- ✅ Конфигурация агентов (`AGENT.md`)
+- ✅ Базовая память агентов (`MEMORY.md`)
+- ⚠️ `CONTEXT.md` - опционально (можно исключить)
 
 ## 🧪 Тестирование
 
 ```bash
-# Backend health
+# Проверь что backend запустился
 curl http://localhost:4001/health
 
-# Список агентов
+# Проверь список агентов
 curl http://localhost:4001/api/agents
+
+# Открой frontend
+open http://localhost:3000
 ```
 
 ### Что Проверить:
@@ -164,10 +210,33 @@ curl http://localhost:4001/api/agents
 2. TestBot виден в офисе
 3. Кнопка "Send Request" работает
 4. Статус меняется: idle → thinking → working → idle
+5. Контекст сохраняется в `backend/agents/test-agent/CONTEXT.md`
 
----
+## 🐛 Troubleshooting
 
-## � Создание Агента
+### Backend не запускается
+```bash
+# Проверь порт
+lsof -i :4001
+
+# Убей процесс если занят
+kill -9 $(lsof -t -i:4001)
+
+# Проверь логи
+cat backend/logs/error.log
+```
+
+### Frontend не подключается
+- Убедись что backend запущен на порту 4001
+- Проверь консоль браузера (F12)
+- Индикатор должен быть зеленый
+
+### Агент не отвечает
+- Проверь API ключ в `backend/.env`
+- Проверь баланс OpenAI
+- Проверь логи: `backend/logs/combined.log`
+
+## 📝 Создание Нового Агента
 
 ```bash
 # Скопируй тестового агента
@@ -180,58 +249,35 @@ nano backend/agents/my-agent/AGENT.md
 Измени:
 - `id: my-agent`
 - `name: MyAgent`
-- Personality
+- Personality и capabilities
 - LLM настройки
 
 Перезапусти backend - агент появится автоматически!
 
----
+## 🤝 Contributing
 
-## 🔒 Git Безопасность
+1. Fork проект
+2. Создай feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit изменения (`git commit -m 'Add amazing feature'`)
+4. Push в branch (`git push origin feature/amazing-feature`)
+5. Открой Pull Request
 
-### НЕ коммитится:
-- ❌ `.env` (API ключи)
-- ❌ `node_modules/`
-- ❌ `logs/`
-- ❌ `.DS_Store`
+## 📄 License
 
-### Коммитится:
-- ✅ `.env.example`
-- ✅ Исходный код
-- ✅ `AGENT.md`, `MEMORY.md`
+MIT License - см. [LICENSE](LICENSE)
 
-### Проверка:
-```bash
-git status | grep "\.env$"
-# Должно быть ПУСТО!
-```
+## 🙏 Acknowledgments
 
----
+- Вдохновлено [OpenClaw](https://docs.openclaw.ai/)
+- UI компоненты от [shadcn/ui](https://ui.shadcn.com/)
+- Анимации от [Framer Motion](https://www.framer.com/motion/)
 
-## 🐛 Troubleshooting
+## 📞 Support
 
-### Backend не запускается
-```bash
-# Проверь порт
-lsof -i :4001
-kill -9 $(lsof -t -i:4001)
-
-# Проверь .env
-cat .env | grep API_KEY
-```
-
-### Агент не отвечает
-```bash
-# Проверь логи
-cat backend/logs/combined.log
-cat backend/logs/error.log
-```
-
----
-
-## � License
-
-MIT License
+Если нашел баг или есть предложения:
+- Открой Issue
+- Напиши в Discussions
+- Создай Pull Request
 
 ---
 
