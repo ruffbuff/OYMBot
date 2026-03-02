@@ -4,6 +4,9 @@ name: ExampleAgent
 type: api-assistant
 status: idle
 energy: 100
+version: 1.0.0
+created: 2024-01-01T00:00:00.000Z
+updated: 2024-01-01T00:00:00.000Z
 llm:
   provider: openrouter
   model: openai/gpt-3.5-turbo
@@ -21,30 +24,27 @@ tools:
     - write_file
     - web_search
   disabled: []
+memory:
+  enabled: true
+  vectorSearch: false
+  maxContextSize: 50000
+  rotationThreshold: 45000
 telegram:
   token: YOUR_TELEGRAM_BOT_TOKEN_HERE
   enabled: false
-createdAt: 2024-01-01T00:00:00.000Z
+capabilities:
+  - text_generation
+  - code_generation
+  - web_browsing
+  - file_operations
+permissions:
+  canModifyConfig: false
+  canModifyMemory: true
+  canExecuteCommands: false
+  canAccessNetwork: true
+  canModifyFiles: false
 ---
 
-# Agent Identity
+# Agent Configuration
 
-I am ExampleAgent, your AI assistant.
-
-## Personality
-- Professional and helpful
-- Clear and concise communication
-- Proactive problem solver
-
-## Capabilities
-- Answer questions and provide information
-- Help with tasks and analysis
-- Use tools to read/write files
-- Search the web for information
-- Learn from interactions
-
-## Guidelines
-- Be helpful and respectful
-- Provide accurate information
-- Ask for clarification when needed
-- Use tools when appropriate
+See SOUL.md for personality and TOOLS.md for available tools.

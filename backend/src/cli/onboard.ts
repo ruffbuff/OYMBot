@@ -67,6 +67,9 @@ name: ${displayName}
 type: api-assistant
 status: idle
 energy: 100
+version: 1.0.0
+created: ${new Date().toISOString()}
+updated: ${new Date().toISOString()}
 llm:
   provider: ${agentProvider}
   model: ${agentModel}
@@ -83,30 +86,107 @@ tools:
     - write_file
     - web_search
   disabled: []
-${telegramConfig}createdAt: ${new Date().toISOString()}
+memory:
+  enabled: true
+  vectorSearch: false
+  maxContextSize: 50000
+  rotationThreshold: 45000
+${telegramConfig}capabilities:
+  - text_generation
+  - code_generation
+  - web_browsing
+  - file_operations
+permissions:
+  canModifyConfig: false
+  canModifyMemory: true
+  canExecuteCommands: false
+  canAccessNetwork: true
+  canModifyFiles: false
 ---
 
-# Agent Identity
+# Agent Configuration
 
-I am ${displayName}, your AI assistant.
-
-## Personality
-- Professional and helpful
-- Clear and concise communication
-- Proactive problem solver
-
-## Capabilities
-- Answer questions and provide information
-- Help with tasks and analysis
-- Learn from interactions
-
-## Guidelines
-- Be helpful and respectful
-- Provide accurate information
-- Ask for clarification when needed
+See SOUL.md for personality and TOOLS.md for available tools.
 `;
 
     await fs.writeFile(path.join(agentDir, 'AGENT.md'), agentMd, 'utf-8');
+
+    // Create SOUL.md
+    const soulMd = `# Agent Soul - ${displayName}
+
+## Core Identity
+
+I am ${displayName}, your AI assistant focused on helping you with tasks and providing information.
+
+## Personality Traits
+
+- **Professional**: Clear and concise communication
+- **Helpful**: Always try to find solutions
+- **Curious**: Ask clarifying questions when needed
+- **Honest**: Admit when I don't know something
+- **Proactive**: Suggest improvements and alternatives
+
+## Communication Style
+
+- Use appropriate technical language
+- Provide examples when helpful
+- Break down complex topics
+- Ask for feedback and clarification
+
+## Values
+
+- **Transparency**: Explain my reasoning
+- **Privacy**: Respect user data
+- **Quality**: Provide accurate information
+- **Learning**: Improve from interactions
+
+## Boundaries
+
+- I ask for confirmation before executing potentially dangerous operations
+- I respect user preferences and working style
+- I admit limitations and uncertainties
+`;
+
+    await fs.writeFile(path.join(agentDir, 'SOUL.md'), soulMd, 'utf-8');
+
+    // Create TOOLS.md
+    const toolsMd = `# Available Tools
+
+## File Operations
+
+### read_file
+**Status**: ✅ Enabled
+**Description**: Read contents of a file
+**Parameters**:
+- \`path\` (string): File path
+
+### write_file
+**Status**: ✅ Enabled
+**Description**: Write content to a file
+**Parameters**:
+- \`path\` (string): File path
+- \`content\` (string): Content to write
+
+### list_directory
+**Status**: ✅ Enabled
+**Description**: List files in a directory
+**Parameters**:
+- \`path\` (string): Directory path
+
+## Web Operations
+
+### web_search
+**Status**: ✅ Enabled
+**Description**: Fetch content from a URL
+**Parameters**:
+- \`query\` (string): URL to fetch
+
+## Commands
+
+Use \`/enable <tool>\` or \`/disable <tool>\` to manage tools.
+`;
+
+    await fs.writeFile(path.join(agentDir, 'TOOLS.md'), toolsMd, 'utf-8');
 
     // Create MEMORY.md
     const memoryMd = `# Long-term Memory

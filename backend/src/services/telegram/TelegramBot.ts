@@ -84,9 +84,87 @@ Type /help for more information.`;
       await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
     });
 
-    // Handle regular messages
+    // Help command
+    bot.onText(/\/help/, async (msg) => {
+      const chatId = msg.chat.id;
+      await this.handleCommand(chatId, '/help', agentId);
+    });
+
+    // Status command
+    bot.onText(/\/status/, async (msg) => {
+      const chatId = msg.chat.id;
+      await this.handleCommand(chatId, '/status', agentId);
+    });
+
+    // Context command
+    bot.onText(/\/context/, async (msg) => {
+      const chatId = msg.chat.id;
+      await this.handleCommand(chatId, '/context', agentId);
+    });
+
+    // Clear command
+    bot.onText(/\/clear/, async (msg) => {
+      const chatId = msg.chat.id;
+      await this.handleCommand(chatId, '/clear', agentId);
+    });
+
+    // Model command
+    bot.onText(/\/model(.*)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const args = match?.[1]?.trim() || '';
+      await this.handleCommand(chatId, `/model ${args}`, agentId);
+    });
+
+    // Provider command
+    bot.onText(/\/provider(.*)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const args = match?.[1]?.trim() || '';
+      await this.handleCommand(chatId, `/provider ${args}`, agentId);
+    });
+
+    // Temperature command
+    bot.onText(/\/temperature(.*)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const args = match?.[1]?.trim() || '';
+      await this.handleCommand(chatId, `/temperature ${args}`, agentId);
+    });
+
+    // Tokens command
+    bot.onText(/\/tokens(.*)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const args = match?.[1]?.trim() || '';
+      await this.handleCommand(chatId, `/tokens ${args}`, agentId);
+    });
+
+    // Memory command
+    bot.onText(/\/memory/, async (msg) => {
+      const chatId = msg.chat.id;
+      await this.handleCommand(chatId, '/memory', agentId);
+    });
+
+    // Skills command
+    bot.onText(/\/skills/, async (msg) => {
+      const chatId = msg.chat.id;
+      await this.handleCommand(chatId, '/skills', agentId);
+    });
+
+    // Enable command
+    bot.onText(/\/enable(.*)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const args = match?.[1]?.trim() || '';
+      await this.handleCommand(chatId, `/enable ${args}`, agentId);
+    });
+
+    // Disable command
+    bot.onText(/\/disable(.*)/, async (msg, match) => {
+      const chatId = msg.chat.id;
+      const args = match?.[1]?.trim() || '';
+      await this.handleCommand(chatId, `/disable ${args}`, agentId);
+    });
+
+    // Handle regular messages (non-commands)
     bot.on('message', async (msg) => {
-      // Skip if it's a command (will be handled by command handlers)
+      // Skip if it's a command (already handled by onText)
       if (msg.text?.startsWith('/')) return;
 
       const chatId = msg.chat.id;
@@ -125,6 +203,33 @@ Type /help for more information.`;
     });
 
     logger.info(`Telegram bot handlers setup complete for agent ${agentId}`);
+  }
+
+  private async handleCommand(chatId: number, commandText: string, agentId: string): Promise<void> {
+    const bot = this.bots.get(agentId);
+    if (!bot) return;
+
+    try {
+      const agent = this.agentRuntime.getAgent(agentId);
+      if (!agent) {
+        await bot.sendMessage(chatId, '❌ Agent not found');
+        return;
+      }
+
+      const result = await this.agentRuntime.executeTask(agentId, {
+        id: Date.now().toString(),
+        agentId,
+        userId: chatId.toString(),
+        description: commandText,
+        status: 'pending',
+        createdAt: new Date(),
+      });
+
+      await bot.sendMessage(chatId, result, { parse_mode: 'Markdown' });
+    } catch (error) {
+      logger.error(`Command error for agent ${agentId}:`, error);
+      await bot.sendMessage(chatId, '❌ Error executing command');
+    }
   }
 
   private getStatusEmoji(status: string): string {

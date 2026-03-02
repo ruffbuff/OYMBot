@@ -165,21 +165,27 @@ export class AgentRuntime {
   }
 
   private buildSystemPrompt(agent: AgentConfig, memory: string): string {
-    let prompt = `You are ${agent.name}.`;
+    let prompt = `You are ${agent.name}, an AI assistant.`;
     
-    // Add model info
-    prompt += `\n\nYou are powered by ${agent.llm.provider} using the ${agent.llm.model} model.`;
+    // Add model info - IMPORTANT: Agent should know this!
+    prompt += `\n\n# Your Configuration
+- Provider: ${agent.llm.provider}
+- Model: ${agent.llm.model}
+- Temperature: ${agent.llm.temperature}
+- Max Tokens: ${agent.llm.maxTokens}
+
+When asked about which AI model you're using, respond with: "I'm using ${agent.llm.provider}/${agent.llm.model}"`;
 
     if (agent.personality) {
-      prompt += `\n\n${agent.personality}`;
+      prompt += `\n\n# Your Personality\n${agent.personality}`;
     }
 
     if (memory) {
-      prompt += `\n\n# Memory\n${memory.slice(0, 1000)}`; // Limit memory size
+      prompt += `\n\n# Long-term Memory\n${memory.slice(0, 1000)}`; // Limit memory size
     }
 
     if (agent.skills.length > 0) {
-      prompt += `\n\n# Available Skills\n${agent.skills.join(', ')}`;
+      prompt += `\n\n# Your Skills\n${agent.skills.join(', ')}`;
     }
 
     // Add tools description (only enabled tools)

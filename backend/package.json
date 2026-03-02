@@ -1,6 +1,6 @@
 {
   "name": "oym-bot-backend",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Backend server for AI Office Platform",
   "main": "dist/index.js",
   "scripts": {
