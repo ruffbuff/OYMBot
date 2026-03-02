@@ -7,29 +7,35 @@ export class TelegramBotService {
   private bots: Map<string, TelegramBot> = new Map();
   private agentRuntime: AgentRuntime;
   private io: SocketIOServer;
-  private enabled: boolean;
 
   constructor(agentRuntime: AgentRuntime, io: SocketIOServer) {
     this.agentRuntime = agentRuntime;
     this.io = io;
-    this.enabled = process.env.TELEGRAM_ENABLED === 'true';
-
-    if (this.enabled) {
-      this.initializeBots();
-    } else {
-      logger.info('Telegram bot disabled');
-    }
+    this.initializeBots();
   }
 
   private async initializeBots(): Promise<void> {
     const agents = this.agentRuntime.getAllAgents();
     
+    if (agents.length === 0) {
+      logger.info('No agents found, skipping Telegram bot initialization');
+      return;
+    }
+
+    let botsInitialized = 0;
+    
     for (const agent of agents) {
       // Each agent should have its own telegram token in AGENT.md
       const token = agent.telegram?.token || process.env[`TELEGRAM_BOT_TOKEN_${agent.id.toUpperCase()}`];
       
-      if (!token) {
-        logger.warn(`No Telegram token for agent ${agent.id}, skipping`);
+      if (!token || token === 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
+        logger.info(`No Telegram token for agent ${agent.id}, skipping`);
+        continue;
+      }
+
+      // Check if telegram is enabled for this agent
+      if (agent.telegram?.enabled === false) {
+        logger.info(`Telegram disabled for agent ${agent.id}, skipping`);
         continue;
       }
 
@@ -37,14 +43,17 @@ export class TelegramBotService {
         const bot = new TelegramBot(token, { polling: true });
         this.bots.set(agent.id, bot);
         this.setupHandlersForAgent(bot, agent.id);
-        logger.info(`Telegram bot initialized for agent ${agent.id}`);
+        botsInitialized++;
+        logger.info(`✅ Telegram bot initialized for agent ${agent.id}`);
       } catch (error) {
         logger.error(`Failed to initialize Telegram bot for agent ${agent.id}:`, error);
       }
     }
 
-    if (this.bots.size === 0) {
-      logger.warn('No Telegram bots initialized');
+    if (botsInitialized === 0) {
+      logger.warn('No Telegram bots initialized. Configure tokens in AGENT.md files.');
+    } else {
+      logger.info(`✅ Initialized ${botsInitialized} Telegram bot(s)`);
     }
   }
 

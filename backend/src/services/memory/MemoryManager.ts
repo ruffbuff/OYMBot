@@ -28,6 +28,10 @@ export class MemoryManager {
         llm: data.llm,
         skills: data.skills || [],
         personality: body,
+        tools: data.tools,
+        telegram: data.telegram,
+        whatsapp: data.whatsapp,
+        discord: data.discord,
       };
     } catch (error) {
       logger.error(`Failed to load agent ${agentId}:`, error);
