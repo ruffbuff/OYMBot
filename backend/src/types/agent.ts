@@ -19,6 +19,21 @@ export interface AgentConfig {
   skills: string[];
   personality?: string;
   capabilities?: string[];
+  tools?: {
+    enabled: string[]; // List of enabled tool names
+    disabled: string[]; // List of disabled tool names
+  };
+  telegram?: {
+    token: string;
+    enabled: boolean;
+  };
+  whatsapp?: {
+    enabled: boolean;
+  };
+  discord?: {
+    token: string;
+    enabled: boolean;
+  };
 }
 
 export interface Message {

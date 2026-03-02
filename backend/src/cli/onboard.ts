@@ -13,6 +13,137 @@ function question(query: string): Promise<string> {
   return new Promise((resolve) => rl.question(query, resolve));
 }
 
+async function createAgent(provider?: string, model?: string, telegramToken?: string): Promise<void> {
+  console.log('\n🤖 Создаем агента...\n');
+  
+  const agentName = await question('Имя агента (Enter = MyAssistant): ');
+  const agentId = (agentName.trim() || 'MyAssistant').toLowerCase().replace(/\s+/g, '-');
+  const displayName = agentName.trim() || 'MyAssistant';
+
+  // Ask for Telegram token for this agent
+  let agentTelegramToken = telegramToken;
+  if (!agentTelegramToken) {
+    console.log('\n📱 Telegram Bot для этого агента (опционально)');
+    console.log('Каждый агент = отдельный Telegram бот');
+    console.log('Получи токен: https://t.me/BotFather\n');
+    const token = await question('Telegram Bot Token (или Enter для пропуска): ');
+    agentTelegramToken = token.trim() || undefined;
+  }
+
+  // Use provided provider/model or defaults
+  const agentProvider = provider || 'openai';
+  const agentModel = model || 'gpt-3.5-turbo';
+
+  // Create agent directory
+  const agentDir = path.resolve(process.cwd(), `agents/${agentId}`);
+  
+  try {
+    // Check if agents directory exists, if not create it
+    const agentsDir = path.resolve(process.cwd(), 'agents');
+    try {
+      await fs.access(agentsDir);
+    } catch {
+      await fs.mkdir(agentsDir, { recursive: true });
+      console.log('✅ Created agents directory');
+    }
+
+    await fs.mkdir(agentDir, { recursive: true });
+    await fs.mkdir(path.join(agentDir, 'memory'), { recursive: true });
+    await fs.mkdir(path.join(agentDir, 'sessions'), { recursive: true });
+
+    // Build telegram config section
+    let telegramConfig = '';
+    if (agentTelegramToken) {
+      telegramConfig = `telegram:
+  token: ${agentTelegramToken}
+  enabled: true
+`;
+    }
+
+    // Create AGENT.md
+    const agentMd = `---
+id: ${agentId}
+name: ${displayName}
+type: api-assistant
+status: idle
+energy: 100
+llm:
+  provider: ${agentProvider}
+  model: ${agentModel}
+  temperature: 0.7
+  maxTokens: 2000
+skills:
+  - conversation
+  - help
+  - analysis
+tools:
+  enabled:
+    - read_file
+    - list_directory
+    - write_file
+    - web_search
+  disabled: []
+${telegramConfig}createdAt: ${new Date().toISOString()}
+---
+
+# Agent Identity
+
+I am ${displayName}, your AI assistant.
+
+## Personality
+- Professional and helpful
+- Clear and concise communication
+- Proactive problem solver
+
+## Capabilities
+- Answer questions and provide information
+- Help with tasks and analysis
+- Learn from interactions
+
+## Guidelines
+- Be helpful and respectful
+- Provide accurate information
+- Ask for clarification when needed
+`;
+
+    await fs.writeFile(path.join(agentDir, 'AGENT.md'), agentMd, 'utf-8');
+
+    // Create MEMORY.md
+    const memoryMd = `# Long-term Memory
+
+## Important Information
+- Created: ${new Date().toISOString()}
+- Purpose: AI assistant for automation and productivity
+
+## Learned Preferences
+(Will be updated as we interact)
+`;
+
+    await fs.writeFile(path.join(agentDir, 'MEMORY.md'), memoryMd, 'utf-8');
+
+    // Create CONTEXT.md
+    const contextMd = `# Current Session Context
+
+Session started: ${new Date().toISOString()}
+
+`;
+
+    await fs.writeFile(path.join(agentDir, 'CONTEXT.md'), contextMd, 'utf-8');
+
+    console.log(`✅ Агент "${displayName}" создан!`);
+    console.log(`   ID: ${agentId}`);
+    console.log(`   Provider: ${agentProvider}`);
+    console.log(`   Model: ${agentModel}`);
+    if (agentTelegramToken) {
+      console.log(`   Telegram: ✅ Настроен`);
+    }
+
+  } catch (error) {
+    console.error('\n❌ Ошибка при создании агента:', error);
+    throw error;
+  }
+}
+
 async function main() {
   console.log('\n🏢 AI Office Platform - Onboarding\n');
   console.log('Добро пожаловать! Давай настроим твой AI офис.\n');
@@ -20,21 +151,76 @@ async function main() {
   // Path to .env in project root (aipanel/.env)
   // When running from backend/, go up one level
   const envPath = path.resolve(process.cwd(), '../.env');
+  const agentsDir = path.resolve(process.cwd(), 'agents');
   let envExists = false;
+  let agentsExist = false;
   
   try {
     await fs.access(envPath);
     envExists = true;
-    console.log('⚠️  .env файл уже существует.');
-    const overwrite = await question('Хочешь перенастроить? (y/n): ');
-    if (overwrite.toLowerCase() !== 'y') {
-      console.log('\n✅ Используем существующую конфигурацию.');
-      rl.close();
-      return;
-    }
   } catch {
     // .env doesn't exist, continue
   }
+
+  try {
+    const agents = await fs.readdir(agentsDir);
+    agentsExist = agents.length > 0;
+  } catch {
+    // agents dir doesn't exist
+  }
+
+  // Check if this is a reconfiguration
+  if (envExists || agentsExist) {
+    console.log('⚠️  Обнаружена существующая конфигурация:\n');
+    if (envExists) console.log('  - .env файл существует');
+    if (agentsExist) console.log('  - Агенты уже созданы');
+    console.log('');
+    
+    const action = await question('Что делать?\n1. Перенастроить (удалить все и начать заново)\n2. Добавить нового агента\n3. Отмена\n\nВыбор (1-3): ');
+    
+    if (action.trim() === '3') {
+      console.log('\n✅ Отменено');
+      rl.close();
+      return;
+    }
+
+    if (action.trim() === '1') {
+      // Full reset
+      console.log('\n🗑️  Удаляю старую конфигурацию...');
+      
+      if (envExists) {
+        await fs.unlink(envPath);
+        console.log('  ✅ .env удален');
+      }
+      
+      if (agentsExist) {
+        await fs.rm(agentsDir, { recursive: true, force: true });
+        console.log('  ✅ Агенты удалены');
+      }
+      
+      console.log('\n✨ Начинаем с чистого листа!\n');
+    } else if (action.trim() === '2') {
+      // Just add new agent, keep .env
+      console.log('\n➕ Добавляем нового агента...\n');
+      
+      if (!envExists) {
+        console.log('❌ .env не найден. Сначала выполни полную настройку (выбери 1)');
+        rl.close();
+        return;
+      }
+      
+      // Skip to agent creation
+      await createAgent();
+      rl.close();
+      return;
+    } else {
+      console.log('\n❌ Неверный выбор');
+      rl.close();
+      return;
+    }
+  }
+
+  // Continue with normal onboarding...
 
   console.log('\n📋 Выбери LLM провайдера:\n');
   console.log('1. OpenRouter (рекомендуется - есть бесплатный тариф)');
@@ -160,29 +346,6 @@ LLM_MODEL=claude-3-haiku-20240307
       return;
   }
 
-  // Optional: Telegram setup
-  console.log('\n📱 Telegram Bot (опционально, можно настроить позже)');
-  const setupTelegram = await question('Настроить Telegram бота сейчас? (y/n): ');
-  
-  if (setupTelegram.toLowerCase() === 'y') {
-    console.log('\nПолучи токен: https://t.me/BotFather\n');
-    const token = await question('Telegram Bot Token (или Enter для пропуска): ');
-    
-    if (token.trim()) {
-      envContent += `
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN=${token.trim()}
-TELEGRAM_ENABLED=true
-`;
-    }
-  } else {
-    envContent += `
-# Telegram Configuration (настрой позже)
-# TELEGRAM_BOT_TOKEN=your-bot-token
-# TELEGRAM_ENABLED=false
-`;
-  }
-
   // Write .env file
   try {
     await fs.writeFile(envPath, envContent, 'utf-8');
@@ -192,13 +355,6 @@ TELEGRAM_ENABLED=true
     rl.close();
     return;
   }
-
-  // Create first agent
-  console.log('\n🤖 Создаем твоего первого агента...\n');
-  
-  const agentName = await question('Имя агента (Enter = MyAssistant): ');
-  const agentId = (agentName.trim() || 'MyAssistant').toLowerCase().replace(/\s+/g, '-');
-  const displayName = agentName.trim() || 'MyAssistant';
 
   // Determine provider and model based on choice
   let provider = 'openai';
@@ -215,94 +371,8 @@ TELEGRAM_ENABLED=true
     model = 'claude-3-haiku-20240307';
   }
 
-  // Create agent directory
-  const agentDir = path.resolve(process.cwd(), `agents/${agentId}`);
-  
-  try {
-    // Check if agents directory exists, if not create it
-    const agentsDir = path.resolve(process.cwd(), 'agents');
-    try {
-      await fs.access(agentsDir);
-    } catch {
-      await fs.mkdir(agentsDir, { recursive: true });
-      console.log('✅ Created agents directory');
-    }
-
-    await fs.mkdir(agentDir, { recursive: true });
-    await fs.mkdir(path.join(agentDir, 'memory'), { recursive: true });
-    await fs.mkdir(path.join(agentDir, 'sessions'), { recursive: true });
-
-    // Create AGENT.md
-    const agentMd = `---
-id: ${agentId}
-name: ${displayName}
-type: api-assistant
-status: idle
-energy: 100
-llm:
-  provider: ${provider}
-  model: ${model}
-  temperature: 0.7
-  maxTokens: 2000
-skills:
-  - conversation
-  - help
-  - analysis
-createdAt: ${new Date().toISOString()}
----
-
-# Agent Identity
-
-I am ${displayName}, your AI assistant.
-
-## Personality
-- Professional and helpful
-- Clear and concise communication
-- Proactive problem solver
-
-## Capabilities
-- Answer questions and provide information
-- Help with tasks and analysis
-- Learn from interactions
-
-## Guidelines
-- Be helpful and respectful
-- Provide accurate information
-- Ask for clarification when needed
-`;
-
-    await fs.writeFile(path.join(agentDir, 'AGENT.md'), agentMd, 'utf-8');
-
-    // Create MEMORY.md
-    const memoryMd = `# Long-term Memory
-
-## Important Information
-- Created: ${new Date().toISOString()}
-- Purpose: AI assistant for automation and productivity
-
-## Learned Preferences
-(Will be updated as we interact)
-`;
-
-    await fs.writeFile(path.join(agentDir, 'MEMORY.md'), memoryMd, 'utf-8');
-
-    // Create CONTEXT.md
-    const contextMd = `# Current Session Context
-
-Session started: ${new Date().toISOString()}
-
-`;
-
-    await fs.writeFile(path.join(agentDir, 'CONTEXT.md'), contextMd, 'utf-8');
-
-    console.log(`✅ Агент "${displayName}" создан!`);
-    console.log(`   ID: ${agentId}`);
-    console.log(`   Provider: ${provider}`);
-    console.log(`   Model: ${model}`);
-
-  } catch (error) {
-    console.error('\n❌ Ошибка при создании агента:', error);
-  }
+  // Create first agent
+  await createAgent(provider, model);
 
   console.log('\n🎉 Onboarding завершен!\n');
   console.log('Следующие шаги:');

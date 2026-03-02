@@ -14,6 +14,16 @@ skills:
   - help
   - analysis
   - file_operations
+tools:
+  enabled:
+    - read_file
+    - list_directory
+    - write_file
+    - web_search
+  disabled: []
+telegram:
+  token: YOUR_TELEGRAM_BOT_TOKEN_HERE
+  enabled: false
 createdAt: 2024-01-01T00:00:00.000Z
 ---
 

@@ -119,14 +119,95 @@ export class MemoryManager {
     }
   }
 
-  // Update context
+  // Update context with rotation (saves to CONTEXT.md as markdown)
   async updateContext(agentId: string, content: string): Promise<void> {
     const contextPath = path.join(this.agentsDir, agentId, 'CONTEXT.md');
+    const MAX_CONTEXT_SIZE = 50000; // 50KB limit
     
     try {
+      // If context is too large, rotate it
+      if (content.length > MAX_CONTEXT_SIZE) {
+        logger.info(`Context too large (${content.length} bytes), rotating...`);
+        
+        // Save full context to sessions
+        await this.saveToSession(agentId, content);
+        
+        // Keep only last 10 messages
+        const messages = content.split('\n\n').filter(line => 
+          line.startsWith('User:') || line.startsWith('Assistant:')
+        );
+        const recentMessages = messages.slice(-10);
+        content = `# Current Session Context\n\n${recentMessages.join('\n\n')}\n`;
+        
+        logger.info(`Rotated context, new size: ${content.length} bytes`);
+      }
+      
       await fs.writeFile(contextPath, content, 'utf-8');
+      logger.info(`✅ Updated context for agent ${agentId}, size: ${content.length} bytes`);
     } catch (error) {
       logger.error(`Failed to update context for agent ${agentId}:`, error);
+      throw error;
+    }
+  }
+
+  // Save message to session transcript (JSONL format like OpenClaw)
+  async saveMessageToTranscript(
+    agentId: string, 
+    role: 'user' | 'assistant', 
+    content: string
+  ): Promise<void> {
+    const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
+    const today = new Date().toISOString().split('T')[0];
+    const transcriptPath = path.join(sessionsDir, `transcript-${today}.jsonl`);
+    
+    try {
+      await fs.mkdir(sessionsDir, { recursive: true });
+      
+      const entry = {
+        type: 'message',
+        timestamp: new Date().toISOString(),
+        message: {
+          role,
+          content,
+        },
+      };
+      
+      const line = JSON.stringify(entry) + '\n';
+      await fs.appendFile(transcriptPath, line, 'utf-8');
+      logger.info(`✅ Saved ${role} message to transcript for agent ${agentId}`);
+    } catch (error) {
+      logger.error(`Failed to save message to transcript for agent ${agentId}:`, error);
+    }
+  }
+
+  // Save context to session file (when rotating)
+  private async saveToSession(agentId: string, content: string): Promise<void> {
+    const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const sessionPath = path.join(sessionsDir, `rotated-${timestamp}.md`);
+    
+    try {
+      await fs.mkdir(sessionsDir, { recursive: true });
+      await fs.writeFile(sessionPath, content, 'utf-8');
+      logger.info(`✅ Saved rotated session to ${sessionPath}`);
+    } catch (error) {
+      logger.error(`Failed to save session for agent ${agentId}:`, error);
+    }
+  }
+
+  // Append to memory (for important facts)
+  async appendToMemory(agentId: string, fact: string): Promise<void> {
+    const memoryPath = path.join(this.agentsDir, agentId, 'MEMORY.md');
+    
+    try {
+      const currentMemory = await this.loadMemory(agentId);
+      const timestamp = new Date().toISOString();
+      const entry = `\n## ${timestamp}\n${fact}\n`;
+      
+      await fs.writeFile(memoryPath, currentMemory + entry, 'utf-8');
+      logger.info(`Appended to memory for agent ${agentId}`);
+    } catch (error) {
+      logger.error(`Failed to append to memory for agent ${agentId}:`, error);
       throw error;
     }
   }

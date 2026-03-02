@@ -79,3 +79,5 @@ backend/agents/*/sessions/
 .cache/
 
 PROMPT.md
+.venv/
+openclaw/
