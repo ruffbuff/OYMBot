@@ -5,26 +5,31 @@ import { useAgentStore } from "@/store/useAgentStore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Zap, AlertCircle, MessageSquare, Wifi, WifiOff, Send } from "lucide-react";
+import { Activity, Zap, AlertCircle, MessageSquare, Wifi, WifiOff, Send, Monitor, Smartphone, Terminal } from "lucide-react";
 
 export function AgentPanel() {
   const agents = useAgentStore((state) => state.agents);
+  const sessions = useAgentStore((state) => state.sessions);
   const selectedAgentId = useAgentStore((state) => state.selectedAgentId);
+  const selectedSessionKey = useAgentStore((state) => state.selectedSessionKey);
   const selectAgent = useAgentStore((state) => state.selectAgent);
+  const selectSession = useAgentStore((state) => state.selectSession);
   const connected = useAgentStore((state) => state.connected);
   const sendTask = useAgentStore((state) => state.sendTask);
 
   const [showChat, setShowChat] = useState(false);
+  const [showSessionSelector, setShowSessionSelector] = useState(false);
   const [message, setMessage] = useState("");
   const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string }>>([]);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+  const selectedSession = sessions.find((s) => s.sessionKey === selectedSessionKey);
 
   // Listen for agent responses
   useEffect(() => {
     const handleAgentResponse = (event: CustomEvent) => {
-      const { agentId, message } = event.detail;
-      if (agentId === selectedAgentId) {
+      const { agentId, sessionKey, message } = event.detail;
+      if (agentId === selectedAgentId && sessionKey === selectedSessionKey) {
         // Replace "Thinking..." with actual response
         setChatHistory((prev) => {
           const newHistory = [...prev];
@@ -43,7 +48,7 @@ export function AgentPanel() {
     return () => {
       window.removeEventListener('agent-response', handleAgentResponse as EventListener);
     };
-  }, [selectedAgentId]);
+  }, [selectedAgentId, selectedSessionKey]);
 
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -62,20 +67,58 @@ export function AgentPanel() {
     return "bg-red-500";
   };
 
+  const getChannelIcon = (channel: string) => {
+    switch (channel) {
+      case 'cli': return <Terminal className="w-4 h-4" />;
+      case 'telegram': return <Smartphone className="w-4 h-4" />;
+      case 'web': return <Monitor className="w-4 h-4" />;
+      default: return <MessageSquare className="w-4 h-4" />;
+    }
+  };
+
+  const getChannelColor = (channel: string) => {
+    switch (channel) {
+      case 'cli': return 'bg-purple-500';
+      case 'telegram': return 'bg-blue-500';
+      case 'web': return 'bg-green-500';
+      default: return 'bg-gray-500';
+    }
+  };
+
   const handleSendMessage = () => {
-    if (!message.trim() || !selectedAgentId) return;
+    if (!message.trim() || !selectedAgentId || !selectedSessionKey) return;
 
     // Add user message to chat
     setChatHistory([...chatHistory, { role: "user", content: message }]);
 
-    // Send to agent
-    sendTask(selectedAgentId, message);
+    // Send to agent with session key
+    sendTask(selectedAgentId, message, selectedSessionKey);
 
     // Clear input
     setMessage("");
 
     // Add placeholder for agent response
     setChatHistory((prev) => [...prev, { role: "agent", content: "Thinking..." }]);
+  };
+
+  const handleOpenChat = () => {
+    if (sessions.length === 0) {
+      alert('No active sessions. Please start a CLI session or Telegram bot first.');
+      return;
+    }
+    
+    if (!selectedSessionKey) {
+      setShowSessionSelector(true);
+    } else {
+      setShowChat(true);
+    }
+  };
+
+  const handleSelectSession = (sessionKey: string) => {
+    selectSession(sessionKey);
+    setShowSessionSelector(false);
+    setShowChat(true);
+    setChatHistory([]); // Clear chat history when switching sessions
   };
 
   return (
@@ -101,8 +144,57 @@ export function AgentPanel() {
         </Badge>
       </div>
 
-      {/* Agent List or Chat */}
-      {!showChat ? (
+      {/* Session Selector */}
+      {showSessionSelector ? (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-slate-700 bg-slate-800 flex items-center justify-between">
+            <h3 className="font-semibold text-white text-sm">Select Session</h3>
+            <Button
+              variant="outline"
+              onClick={() => setShowSessionSelector(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {sessions.length === 0 && (
+              <div className="text-center py-8 text-slate-400">
+                <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p className="text-sm">No active sessions</p>
+                <p className="text-xs mt-1">Start CLI or Telegram bot first</p>
+              </div>
+            )}
+            {sessions.map((session) => (
+              <Card
+                key={session.sessionKey}
+                className="cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all"
+                onClick={() => handleSelectSession(session.sessionKey)}
+              >
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-2 rounded ${getChannelColor(session.channel)}`}>
+                        {getChannelIcon(session.channel)}
+                      </div>
+                      <div>
+                        <CardTitle className="text-sm font-medium">{session.channel.toUpperCase()}</CardTitle>
+                        <p className="text-xs text-slate-400">{session.userId}</p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary">{session.messageCount} msgs</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4 pt-2">
+                  <p className="text-xs text-slate-400">
+                    Last activity: {new Date(session.lastActivity).toLocaleString()}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ) : !showChat ? (
         <>
           {/* Agent List */}
           <div className="p-4 space-y-3 flex-1 overflow-y-auto">
@@ -156,13 +248,18 @@ export function AgentPanel() {
             <div className="p-4 border-t border-slate-700 bg-slate-800 flex-shrink-0 space-y-3">
               <h3 className="font-semibold text-white text-sm">Actions</h3>
               <Button
-                onClick={() => setShowChat(true)}
+                onClick={handleOpenChat}
                 className="w-full"
                 disabled={!connected}
               >
                 <MessageSquare className="w-4 h-4 mr-2" />
                 Open Chat
               </Button>
+              {sessions.length > 0 && (
+                <p className="text-xs text-slate-400 text-center">
+                  {sessions.length} active session(s)
+                </p>
+              )}
             </div>
           )}
         </>
@@ -174,14 +271,31 @@ export function AgentPanel() {
             <div className="p-4 border-b border-slate-700 bg-slate-800 flex items-center justify-between">
               <div>
                 <h3 className="font-semibold text-white text-sm">{selectedAgent?.name}</h3>
-                <p className="text-xs text-slate-400">Chat Session</p>
+                {selectedSession && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className={`p-1 rounded ${getChannelColor(selectedSession.channel)}`}>
+                      {getChannelIcon(selectedSession.channel)}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      {selectedSession.channel.toUpperCase()} - {selectedSession.userId}
+                    </p>
+                  </div>
+                )}
               </div>
-              <Button
-                variant="outline"
-                onClick={() => setShowChat(false)}
-              >
-                Close
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowSessionSelector(true)}
+                >
+                  Switch Session
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowChat(false)}
+                >
+                  Close
+                </Button>
+              </div>
             </div>
 
             {/* Chat Messages */}
@@ -189,7 +303,8 @@ export function AgentPanel() {
               {chatHistory.length === 0 && (
                 <div className="text-center py-8 text-slate-400">
                   <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p className="text-sm">Start a conversation</p>
+                  <p className="text-sm">Continue the conversation</p>
+                  <p className="text-xs mt-1">This session has {selectedSession?.messageCount || 0} messages</p>
                 </div>
               )}
               {chatHistory.map((msg, idx) => (
@@ -204,7 +319,7 @@ export function AgentPanel() {
                         : "bg-slate-700 text-slate-100"
                     }`}
                   >
-                    <p className="text-sm">{msg.content}</p>
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                   </div>
                 </div>
               ))}
@@ -220,11 +335,11 @@ export function AgentPanel() {
                   onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
                   placeholder="Type a message..."
                   className="flex-1 bg-slate-700 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={!connected}
+                  disabled={!connected || !selectedSessionKey}
                 />
                 <Button
                   onClick={handleSendMessage}
-                  disabled={!connected || !message.trim()}
+                  disabled={!connected || !message.trim() || !selectedSessionKey}
                 >
                   <Send className="w-4 h-4" />
                 </Button>

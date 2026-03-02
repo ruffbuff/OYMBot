@@ -90,7 +90,7 @@ Use \`/clear\` to reset context when it gets too large.`;
     // Model commands
     this.registerCommand({
       name: 'model',
-      description: 'Show or change AI model',
+      description: 'Show or change AI model and provider',
       aliases: ['/model'],
       execute: async (args, ctx) => {
         if (args.length === 0) {
@@ -103,8 +103,17 @@ Use \`/clear\` to reset context when it gets too large.`;
 **Temperature:** ${agent.llm.temperature}
 **Max Tokens:** ${agent.llm.maxTokens}
 
-To change model: \`/model <provider>/<model>\`
-Example: \`/model openrouter/anthropic/claude-3-haiku\``;
+**Available Providers:**
+• openai - OpenAI API
+• openrouter - OpenRouter (free tier available)
+• ollama - Local Ollama
+• anthropic - Anthropic Claude
+
+To change model and provider: \`/model <provider>/<model>\`
+Examples:
+• \`/model openrouter/anthropic/claude-3-haiku\`
+• \`/model openai/gpt-4\`
+• \`/model ollama/llama2\``;
         }
 
         // Change model
@@ -118,6 +127,12 @@ Example: \`/model openrouter/anthropic/claude-3-haiku\``;
         const provider = parts[0];
         const model = parts.slice(1).join('/');
 
+        // Validate provider
+        const validProviders = ['openai', 'openrouter', 'ollama', 'anthropic'];
+        if (!validProviders.includes(provider)) {
+          return `❌ Invalid provider. Choose from: ${validProviders.join(', ')}`;
+        }
+
         // Update agent config
         const agent = await ctx.memoryManager.loadAgent(ctx.agentId);
         agent.llm.provider = provider as any;
@@ -126,7 +141,7 @@ Example: \`/model openrouter/anthropic/claude-3-haiku\``;
         // Save updated config
         await ctx.memoryManager.createAgent(agent); // This updates AGENT.md
 
-        return `✅ Model changed to ${provider}/${model}`;
+        return `✅ Model and provider changed to ${provider}/${model}`;
       },
     });
 
@@ -159,7 +174,7 @@ ${preview}${hasMore ? '\n\n... (truncated)' : ''}
       description: 'Show available commands',
       aliases: ['/help', '/commands'],
       execute: async (args, ctx) => {
-        const commands = Array.from(this.commands.values());
+        const commands = this.listCommands(); // Fix: Use listCommands() to avoid duplicates
         const grouped = new Map<string, Command[]>();
 
         // Group by category (simple grouping)
@@ -284,120 +299,13 @@ ${preview}${hasMore ? '\n\n... (truncated)' : ''}
       },
     });
 
-    // Provider command
-    this.registerCommand({
-      name: 'provider',
-      description: 'Show or change LLM provider',
-      aliases: ['/provider'],
-      execute: async (args, ctx) => {
-        if (args.length === 0) {
-          // Show current provider
-          const { agent } = ctx;
-          return `🔌 Current Provider
-
-**Provider:** ${agent.llm.provider}
-**Model:** ${agent.llm.model}
-**Endpoint:** ${agent.llm.endpoint || 'default'}
-
-**Available Providers:**
-• openai - OpenAI API
-• openrouter - OpenRouter (free tier available)
-• ollama - Local Ollama
-• anthropic - Anthropic Claude
-
-To change: \`/provider <name>\`
-Example: \`/provider openrouter\``;
-        }
-
-        const provider = args[0];
-        const validProviders = ['openai', 'openrouter', 'ollama', 'anthropic'];
-        
-        if (!validProviders.includes(provider)) {
-          return `❌ Invalid provider. Choose from: ${validProviders.join(', ')}`;
-        }
-
-        const agent = await ctx.memoryManager.loadAgent(ctx.agentId);
-        agent.llm.provider = provider as any;
-        
-        await ctx.memoryManager.createAgent(agent);
-        return `✅ Provider changed to ${provider}`;
-      },
-    });
-
-    // Temperature command
-    this.registerCommand({
-      name: 'temperature',
-      description: 'Show or change model temperature',
-      aliases: ['/temperature', '/temp'],
-      execute: async (args, ctx) => {
-        if (args.length === 0) {
-          const { agent } = ctx;
-          return `🌡 Temperature: ${agent.llm.temperature}
-
-Temperature controls randomness:
-• 0.0 = Deterministic, focused
-• 0.7 = Balanced (default)
-• 1.0 = Creative, varied
-
-To change: \`/temperature <value>\`
-Example: \`/temperature 0.8\``;
-        }
-
-        const temp = parseFloat(args[0]);
-        
-        if (isNaN(temp) || temp < 0 || temp > 2) {
-          return '❌ Temperature must be between 0 and 2';
-        }
-
-        const agent = await ctx.memoryManager.loadAgent(ctx.agentId);
-        agent.llm.temperature = temp;
-        
-        await ctx.memoryManager.createAgent(agent);
-        return `✅ Temperature set to ${temp}`;
-      },
-    });
-
-    // Tokens command
-    this.registerCommand({
-      name: 'tokens',
-      description: 'Show or change max tokens',
-      aliases: ['/tokens', '/maxtokens'],
-      execute: async (args, ctx) => {
-        if (args.length === 0) {
-          const { agent } = ctx;
-          return `🎫 Max Tokens: ${agent.llm.maxTokens}
-
-Max tokens controls response length.
-Common values:
-• 1024 = Short responses
-• 2048 = Medium responses (default)
-• 4096 = Long responses
-
-To change: \`/tokens <value>\`
-Example: \`/tokens 4096\``;
-        }
-
-        const tokens = parseInt(args[0]);
-        
-        if (isNaN(tokens) || tokens < 100 || tokens > 32000) {
-          return '❌ Max tokens must be between 100 and 32000';
-        }
-
-        const agent = await ctx.memoryManager.loadAgent(ctx.agentId);
-        agent.llm.maxTokens = tokens;
-        
-        await ctx.memoryManager.createAgent(agent);
-        return `✅ Max tokens set to ${tokens}`;
-      },
-    });
-
     logger.info(`Registered ${this.commands.size} commands`);
   }
 
   private getCategoryForCommand(name: string): string {
     const categories: Record<string, string[]> = {
       'Status': ['status', 'context', 'memory'],
-      'Control': ['clear', 'model', 'provider', 'temperature', 'tokens'],
+      'Control': ['clear', 'model'],
       'Tools': ['skills', 'enable', 'disable'],
       'Help': ['help'],
     };

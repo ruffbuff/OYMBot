@@ -112,57 +112,111 @@ export class MemoryManager {
     }
   }
 
-  // Load context
-  async loadContext(agentId: string): Promise<string> {
-    const contextPath = path.join(this.agentsDir, agentId, 'CONTEXT.md');
-    
+  // Load context for a specific session
+  async loadContext(agentId: string, sessionKey?: string): Promise<string> {
+    // If no session key, use legacy CONTEXT.md (backward compatibility)
+    if (!sessionKey) {
+      const contextPath = path.join(this.agentsDir, agentId, 'CONTEXT.md');
+      try {
+        return await fs.readFile(contextPath, 'utf-8');
+      } catch (error) {
+        return '';
+      }
+    }
+
+    // Use session-specific context file
+    const sessionContextPath = this.getSessionContextPath(agentId, sessionKey);
     try {
-      return await fs.readFile(contextPath, 'utf-8');
+      return await fs.readFile(sessionContextPath, 'utf-8');
     } catch (error) {
-      return '';
+      // Initialize empty context for new session
+      return '# Session Context\n\n';
     }
   }
 
-  // Update context with rotation (saves to CONTEXT.md as markdown)
-  async updateContext(agentId: string, content: string): Promise<void> {
-    const contextPath = path.join(this.agentsDir, agentId, 'CONTEXT.md');
+  // Update context with rotation (session-aware)
+  async updateContext(agentId: string, content: string, sessionKey?: string): Promise<void> {
     const MAX_CONTEXT_SIZE = 50000; // 50KB limit
+    
+    // If no session key, use legacy CONTEXT.md (backward compatibility)
+    if (!sessionKey) {
+      const contextPath = path.join(this.agentsDir, agentId, 'CONTEXT.md');
+      try {
+        if (content.length > MAX_CONTEXT_SIZE) {
+          logger.info(`Context too large (${content.length} bytes), rotating...`);
+          await this.saveToSession(agentId, content);
+          const messages = content.split('\n\n').filter(line => 
+            line.startsWith('User:') || line.startsWith('Assistant:')
+          );
+          const recentMessages = messages.slice(-10);
+          content = `# Current Session Context\n\n${recentMessages.join('\n\n')}\n`;
+          logger.info(`Rotated context, new size: ${content.length} bytes`);
+        }
+        await fs.writeFile(contextPath, content, 'utf-8');
+        logger.info(`✅ Updated context for agent ${agentId}, size: ${content.length} bytes`);
+      } catch (error) {
+        logger.error(`Failed to update context for agent ${agentId}:`, error);
+        throw error;
+      }
+      return;
+    }
+
+    // Session-specific context
+    const sessionContextPath = this.getSessionContextPath(agentId, sessionKey);
     
     try {
       // If context is too large, rotate it
       if (content.length > MAX_CONTEXT_SIZE) {
-        logger.info(`Context too large (${content.length} bytes), rotating...`);
+        logger.info(`Session ${sessionKey} context too large (${content.length} bytes), rotating...`);
         
-        // Save full context to sessions
-        await this.saveToSession(agentId, content);
+        // Save full context to session transcript
+        await this.saveSessionSnapshot(agentId, sessionKey, content);
         
         // Keep only last 10 messages
         const messages = content.split('\n\n').filter(line => 
           line.startsWith('User:') || line.startsWith('Assistant:')
         );
         const recentMessages = messages.slice(-10);
-        content = `# Current Session Context\n\n${recentMessages.join('\n\n')}\n`;
+        content = `# Session Context\n\n${recentMessages.join('\n\n')}\n`;
         
-        logger.info(`Rotated context, new size: ${content.length} bytes`);
+        logger.info(`Rotated session context, new size: ${content.length} bytes`);
       }
       
-      await fs.writeFile(contextPath, content, 'utf-8');
-      logger.info(`✅ Updated context for agent ${agentId}, size: ${content.length} bytes`);
+      await fs.writeFile(sessionContextPath, content, 'utf-8');
+      logger.info(`✅ Updated context for session ${sessionKey}, size: ${content.length} bytes`);
     } catch (error) {
-      logger.error(`Failed to update context for agent ${agentId}:`, error);
+      logger.error(`Failed to update context for session ${sessionKey}:`, error);
       throw error;
     }
+  }
+
+  // Get session context file path
+  private getSessionContextPath(agentId: string, sessionKey: string): string {
+    const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
+    const safeSessionKey = sessionKey.replace(/[/:]/g, '-');
+    return path.join(sessionsDir, `${safeSessionKey}-context.md`);
   }
 
   // Save message to session transcript (JSONL format like OpenClaw)
   async saveMessageToTranscript(
     agentId: string, 
     role: 'user' | 'assistant', 
-    content: string
+    content: string,
+    sessionKey?: string
   ): Promise<void> {
     const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
-    const today = new Date().toISOString().split('T')[0];
-    const transcriptPath = path.join(sessionsDir, `transcript-${today}.jsonl`);
+    
+    // Generate filename based on session key or use legacy format
+    let transcriptPath: string;
+    if (sessionKey) {
+      const safeSessionKey = sessionKey.replace(/[/:]/g, '-');
+      const today = new Date().toISOString().split('T')[0];
+      transcriptPath = path.join(sessionsDir, `${safeSessionKey}-${today}.jsonl`);
+    } else {
+      // Legacy format for backward compatibility
+      const today = new Date().toISOString().split('T')[0];
+      transcriptPath = path.join(sessionsDir, `transcript-${today}.jsonl`);
+    }
     
     try {
       await fs.mkdir(sessionsDir, { recursive: true });
@@ -170,6 +224,7 @@ export class MemoryManager {
       const entry = {
         type: 'message',
         timestamp: new Date().toISOString(),
+        sessionKey: sessionKey || 'legacy',
         message: {
           role,
           content,
@@ -178,9 +233,25 @@ export class MemoryManager {
       
       const line = JSON.stringify(entry) + '\n';
       await fs.appendFile(transcriptPath, line, 'utf-8');
-      logger.info(`✅ Saved ${role} message to transcript for agent ${agentId}`);
+      logger.info(`✅ Saved ${role} message to transcript for ${sessionKey || 'legacy session'}`);
     } catch (error) {
       logger.error(`Failed to save message to transcript for agent ${agentId}:`, error);
+    }
+  }
+
+  // Save session snapshot when rotating
+  private async saveSessionSnapshot(agentId: string, sessionKey: string, content: string): Promise<void> {
+    const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
+    const safeSessionKey = sessionKey.replace(/[/:]/g, '-');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const snapshotPath = path.join(sessionsDir, `${safeSessionKey}-snapshot-${timestamp}.md`);
+    
+    try {
+      await fs.mkdir(sessionsDir, { recursive: true });
+      await fs.writeFile(snapshotPath, content, 'utf-8');
+      logger.info(`✅ Saved session snapshot to ${snapshotPath}`);
+    } catch (error) {
+      logger.error(`Failed to save session snapshot for ${sessionKey}:`, error);
     }
   }
 

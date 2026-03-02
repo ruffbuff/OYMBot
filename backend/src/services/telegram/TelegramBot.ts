@@ -2,14 +2,17 @@ import TelegramBot from 'node-telegram-bot-api';
 import { Server as SocketIOServer } from 'socket.io';
 import { logger } from '../../utils/logger';
 import { AgentRuntime } from '../../agents/AgentRuntime';
+import { SessionManager } from '../session/SessionManager';
 
 export class TelegramBotService {
   private bots: Map<string, TelegramBot> = new Map();
   private agentRuntime: AgentRuntime;
+  private sessionManager: SessionManager;
   private io: SocketIOServer;
 
-  constructor(agentRuntime: AgentRuntime, io: SocketIOServer) {
+  constructor(agentRuntime: AgentRuntime, sessionManager: SessionManager, io: SocketIOServer) {
     this.agentRuntime = agentRuntime;
+    this.sessionManager = sessionManager;
     this.io = io;
     this.initializeBots();
   }
@@ -175,8 +178,12 @@ Type /help for more information.`;
       try {
         await bot.sendChatAction(chatId, 'typing');
 
+        // Create or get session for this Telegram user
+        const session = this.sessionManager.getOrCreateSession('telegram', chatId.toString(), agentId);
+        logger.info(`Processing message for session: ${session.sessionKey}`);
+
         // Broadcast status to frontend
-        this.io.emit('agent:status', { agentId, status: 'thinking' });
+        this.io.emit('agent:status', { agentId, status: 'thinking', sessionKey: session.sessionKey });
 
         const result = await this.agentRuntime.executeTask(agentId, {
           id: Date.now().toString(),
@@ -185,12 +192,16 @@ Type /help for more information.`;
           description: text,
           status: 'pending',
           createdAt: new Date(),
-        });
+        }, session.sessionKey); // Pass session key
+
+        // Update session activity
+        this.sessionManager.updateSessionActivity(session.sessionKey);
 
         // Broadcast status to frontend
         this.io.emit('agent:status', { 
           agentId, 
-          status: this.agentRuntime.getAgent(agentId)?.status || 'idle'
+          status: this.agentRuntime.getAgent(agentId)?.status || 'idle',
+          sessionKey: session.sessionKey
         });
 
         await bot.sendMessage(chatId, result, {
@@ -216,6 +227,9 @@ Type /help for more information.`;
         return;
       }
 
+      // Create or get session for this Telegram user
+      const session = this.sessionManager.getOrCreateSession('telegram', chatId.toString(), agentId);
+
       const result = await this.agentRuntime.executeTask(agentId, {
         id: Date.now().toString(),
         agentId,
@@ -223,7 +237,10 @@ Type /help for more information.`;
         description: commandText,
         status: 'pending',
         createdAt: new Date(),
-      });
+      }, session.sessionKey); // Pass session key
+
+      // Update session activity
+      this.sessionManager.updateSessionActivity(session.sessionKey);
 
       await bot.sendMessage(chatId, result, { parse_mode: 'Markdown' });
     } catch (error) {

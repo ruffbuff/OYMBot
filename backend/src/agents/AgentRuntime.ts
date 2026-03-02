@@ -29,7 +29,7 @@ export class AgentRuntime {
     logger.info(`Loaded ${agents.length} agents`);
   }
 
-  async executeTask(agentId: string, task: Task): Promise<string> {
+  async executeTask(agentId: string, task: Task, sessionKey?: string): Promise<string> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
@@ -38,7 +38,7 @@ export class AgentRuntime {
     try {
       // Check if message is a command
       if (this.commandManager.isCommand(task.description)) {
-        logger.info(`Processing command: ${task.description}`);
+        logger.info(`Processing command: ${task.description} for session: ${sessionKey || 'legacy'}`);
         
         const commandResult = await this.commandManager.executeCommand(
           task.description,
@@ -60,9 +60,9 @@ export class AgentRuntime {
       // Update agent status
       await this.updateAgentStatus(agentId, 'thinking');
 
-      // Load context
+      // Load context (session-aware)
       const memory = await this.memoryManager.loadMemory(agentId);
-      const context = await this.memoryManager.loadContext(agentId);
+      const context = await this.memoryManager.loadContext(agentId, sessionKey);
 
       // Build prompt
       const systemPrompt = this.buildSystemPrompt(agent, memory);
@@ -128,20 +128,20 @@ export class AgentRuntime {
         }
       }
 
-      // Save user message to transcript (JSONL)
-      await this.memoryManager.saveMessageToTranscript(agentId, 'user', task.description);
+      // Save user message to transcript (JSONL) - session-aware
+      await this.memoryManager.saveMessageToTranscript(agentId, 'user', task.description, sessionKey);
       
-      // Save assistant response to transcript (JSONL)
-      await this.memoryManager.saveMessageToTranscript(agentId, 'assistant', finalResponse);
+      // Save assistant response to transcript (JSONL) - session-aware
+      await this.memoryManager.saveMessageToTranscript(agentId, 'assistant', finalResponse, sessionKey);
 
-      // Update context with new message (Markdown)
+      // Update context with new message (Markdown) - session-aware
       const updatedContext = `${context}\n\nUser: ${task.description}\nAssistant: ${finalResponse}\n`;
-      await this.memoryManager.updateContext(agentId, updatedContext);
+      await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
 
       // Update status back to idle
       await this.updateAgentStatus(agentId, 'idle');
 
-      logger.info(`Task completed for agent ${agentId}`);
+      logger.info(`Task completed for agent ${agentId}, session: ${sessionKey || 'legacy'}`);
 
       return finalResponse;
     } catch (error) {
@@ -151,7 +151,7 @@ export class AgentRuntime {
     }
   }
 
-  async processMessage(agentId: string, message: Message): Promise<string> {
+  async processMessage(agentId: string, message: Message, sessionKey?: string): Promise<string> {
     const task: Task = {
       id: randomUUID(),
       agentId,
@@ -161,20 +161,36 @@ export class AgentRuntime {
       createdAt: new Date(),
     };
 
-    return this.executeTask(agentId, task);
+    return this.executeTask(agentId, task, sessionKey);
   }
 
   private buildSystemPrompt(agent: AgentConfig, memory: string): string {
     let prompt = `You are ${agent.name}, an AI assistant.`;
     
-    // Add model info - IMPORTANT: Agent should know this!
-    prompt += `\n\n# Your Configuration
+    // Add model info with few-shot examples - CRITICAL for overriding training data
+    prompt += `\n\n# Your AI Model Configuration
+
+You are currently running on:
 - Provider: ${agent.llm.provider}
 - Model: ${agent.llm.model}
 - Temperature: ${agent.llm.temperature}
 - Max Tokens: ${agent.llm.maxTokens}
 
-When asked about which AI model you're using, respond with: "I'm using ${agent.llm.provider}/${agent.llm.model}"`;
+# How to Answer Questions About Your Model
+
+CRITICAL INSTRUCTION: When users ask about your AI model, you MUST respond with your actual provider and model from the configuration above.
+
+Examples of CORRECT responses:
+- User: "what ai model are you using?"
+  You: "I'm using ${agent.llm.provider}/${agent.llm.model}"
+
+- User: "which model are you?"
+  You: "I'm running on ${agent.llm.model} via ${agent.llm.provider}"
+
+- User: "what's your model?"
+  You: "My current model is ${agent.llm.provider}/${agent.llm.model}"
+
+NEVER mention "OpenClaw" when asked about your model. OpenClaw is the platform/gateway that connects you to users, NOT your AI model.`;
 
     if (agent.personality) {
       prompt += `\n\n# Your Personality\n${agent.personality}`;

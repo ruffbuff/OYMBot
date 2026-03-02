@@ -1,0 +1,94 @@
+привет, прочитай про openclaw docs, и посмотри их репозиторий. Найди мне информацию - на чем построен CLI/TUI их, что использует.
+Так же найди информацию точную о том как работает общая система. Мне это нужно чтобы понимать как создать альтернативу, но со своими доработками в настройках и фронтэнде для визуализации рабочей зоны для своих агентов.
+
+20:59
+
+Searched the web
+Searched the web
+
+
+
+
+
+
+
+
+
+
+Теперь у меня достаточно информации для полного ответа. Вот всё, что нужно знать.
+
+OpenClaw — полный разбор архитектуры и стека
+🔧 Стек CLI/TUI
+TUI построен на TypeScript + Node.js ≥22, код живёт в src/tui/. Из найденных файлов (src/tui/gateway-chat.ts, src/tui/tui-local-shell.ts) видно, что это нативный TypeScript без React.
+
+Точную TUI-библиотеку (ink vs blessed) исходный код явно не раскрывает — репозиторий закрыт для анонимного просмотра полного package.json. Но по косвенным признакам:
+
+Упоминается tui:dev команда в scripts
+Структура компонентов (Header / Chat log / Status line / Footer / Input) типична для Ink (React for CLI, использует Yoga/Flexbox)
+Сам автор (Peter Steinberger — бывший iOS разработчик, знакомый с React) вероятно выбрал Ink
+Цветовые настройки через JSON ("tui": { "colors": { ... } }) — паттерн Ink-приложений
+CLI-каркас: CLI-структура строится в src/cli/program.ts, точка входа — src/index.ts 
+GitHub
+. Судя по синтаксису команд (openclaw gateway --port 18789 --verbose, --url, --token) — это commander.js или похожий фреймворк.
+
+🏗️ Общая архитектура системы
+OpenClaw — это единый Gateway-процесс на Node.js, который поднимает один мультиплексированный порт (по умолчанию 18789) и предоставляет: WebSocket RPC для всех управляющих клиентов, HTTP API (POST /tools/invoke, OpenAI-совместимая поверхность) и статические ассеты Control UI (SPA для браузера). 
+DeepWiki
+
+Схема выглядит так:
+
+Telegram / Discord / WhatsApp / Signal / iMessage / ...
+                    ↓
+            ┌─────────────────────┐
+            │     GATEWAY          │
+            │  ws://0.0.0.0:18789  │
+            └────────┬────────────┘
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+      CLI/TUI    Control UI    Mobile Nodes
+   (openclaw)   (SPA браузер) (iOS/Android)
+Агентный pipeline многоступенчатый: Model selection → session init → prompt construction → tool loop → streaming. Channels — это адаптеры, нормализующие сообщения платформ в общий формат OpenClaw. Инструменты управляются политиками с каскадными allow/deny списками. Состояние хранится на диске: транскрипты сессий в .jsonl-файлах, конфиг с hot-reload поддержкой. Расширение — через npm-плагины. 
+DeepWiki
+
+Ключевые компоненты:
+
+Компонент	Технология	Расположение
+Gateway (core)	Node.js ≥22, TypeScript	src/gateway/
+CLI/TUI	TypeScript + Ink (предположительно)	src/tui/, src/cli/
+Control UI (веб)	SPA, билдится через pnpm ui:build	ui/
+iOS app	Swift / Xcode	apps/ios/
+Android app	Kotlin / Gradle	apps/android/
+macOS app	Swift	apps/macos/
+Плагины/каналы	npm-пакеты	extensions/
+Агент — это:
+
+Рабочая директория (~/.openclaw/workspace) с файлами AGENTS.md, SOUL.md, MEMORY.md, TOOLS.md
+Собственный store сессий (sessions.json + .jsonl транскрипты)
+Набор моделей с fallback-цепочкой
+Набор инструментов (exec, browser, memory search, subagent spawning и т.д.)
+Протокол: Все клиенты (CLI, Control UI, плагины каналов, мобильные приложения) общаются с Gateway через типизированный WebSocket RPC протокол с тремя типами фреймов. 
+DeepWiki
+
+TUI подключается к Gateway через WebSocket (ws://127.0.0.1:18789) и регистрируется как mode: "tui".
+
+💡 Как создать альтернативу с кастомным фронтендом
+Вот точки входа для твоего проекта:
+
+1. Gateway-совместимый клиент — подключиться к тому же WS-протоколу. Можно взять OpenClaw как Gateway и написать свой TUI/UI поверх него. TUI просто делает WS-соединение с токеном.
+
+2. Кастомный TUI — если хочешь терминальную визуализацию агентов:
+
+Ink (React для терминала) — лучший выбор для Node.js, особенно если знаком с React. Flexbox через Yoga, TypeScript-first.
+Textual (Python) — если предпочитаешь Python, очень мощный для рабочих зон
+Bubbletea (Go) — если нужна скорость
+3. Веб-дашборд — уже есть пример: OpenClaw Studio — это чистый веб-дашборд на Next.js + React + Tailwind, который брижует браузерный WebSocket к Gateway и рендерит tool calls, thinking traces и финальные строки транскриптов. 
+GitHub
+
+4. Свой Gateway — полная альтернатива. Берёшь тот же подход: Node.js + WebSocket server + agent runner, но со своим конфигом и UI. Ключевые части для реализации:
+
+WS сервер (порт/auth)
+Agent runner (модель + tool loop + streaming)
+Session store (JSONL)
+Plugin система для каналов
+Если хочешь — могу помочь спроектировать архитектуру твоей кастомной системы или сделать прототип TUI визуализации агентов на Ink/React.

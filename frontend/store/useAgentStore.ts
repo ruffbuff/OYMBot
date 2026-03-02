@@ -2,25 +2,38 @@ import { create } from 'zustand';
 import { Agent, AgentStatus } from '@/types/agent';
 import { wsClient } from '@/lib/websocket';
 
+interface Session {
+  sessionKey: string;
+  channel: 'cli' | 'telegram' | 'web' | 'whatsapp' | 'discord';
+  userId: string;
+  agentId: string;
+  lastActivity: Date;
+  messageCount: number;
+}
+
 interface AgentStore {
   agents: Agent[];
+  sessions: Session[];
   selectedAgentId: string | null;
+  selectedSessionKey: string | null;
   systemStatus: 'normal' | 'high-load' | 'error';
   panicMode: boolean;
   connected: boolean;
   
   // Actions
   setAgents: (agents: Agent[]) => void;
+  setSessions: (sessions: Session[]) => void;
   setAgentStatus: (id: string, status: AgentStatus, task?: string) => void;
   setAgentEnergy: (id: string, energy: number) => void;
   selectAgent: (id: string | null) => void;
+  selectSession: (sessionKey: string | null) => void;
   setSystemStatus: (status: 'normal' | 'high-load' | 'error') => void;
   setPanicMode: (panic: boolean) => void;
   setConnected: (connected: boolean) => void;
   
   // WebSocket actions
   connectWebSocket: () => void;
-  sendTask: (agentId: string, description: string) => void;
+  sendTask: (agentId: string, description: string, sessionKey: string) => void;
   
   // Simulations (for testing)
   simulateRequest: () => void;
@@ -31,12 +44,16 @@ interface AgentStore {
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
   agents: [],
+  sessions: [],
   selectedAgentId: null,
+  selectedSessionKey: null,
   systemStatus: 'normal',
   panicMode: false,
   connected: false,
 
   setAgents: (agents) => set({ agents }),
+
+  setSessions: (sessions) => set({ sessions }),
 
   setAgentStatus: (id, status, task) =>
     set((state) => ({
@@ -53,6 +70,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     })),
 
   selectAgent: (id) => set({ selectedAgentId: id }),
+
+  selectSession: (sessionKey) => set({ selectedSessionKey: sessionKey }),
 
   setSystemStatus: (status) => set({ systemStatus: status }),
 
@@ -77,18 +96,24 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       get().setAgents(data.agents);
     });
 
+    // Receive sessions list
+    socket.on('sessions:list', (data: { sessions: Session[] }) => {
+      console.log('Received sessions:', data.sessions);
+      get().setSessions(data.sessions);
+    });
+
     // Agent status updates
-    socket.on('agent:status', (data: { agentId: string; status: AgentStatus }) => {
+    socket.on('agent:status', (data: { agentId: string; status: AgentStatus; sessionKey?: string }) => {
       console.log('Agent status update:', data);
       get().setAgentStatus(data.agentId, data.status);
     });
 
     // Task result
-    socket.on('task:result', (data: { agentId: string; result: string }) => {
+    socket.on('task:result', (data: { agentId: string; sessionKey: string; result: string }) => {
       console.log('Task result:', data);
       // Emit event for chat component
       window.dispatchEvent(new CustomEvent('agent-response', { 
-        detail: { agentId: data.agentId, message: data.result } 
+        detail: { agentId: data.agentId, sessionKey: data.sessionKey, message: data.result } 
       }));
     });
 
@@ -99,30 +124,33 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     });
   },
 
-  sendTask: (agentId, description) => {
+  sendTask: (agentId, description, sessionKey) => {
     const socket = wsClient.getSocket();
     if (socket?.connected) {
-      socket.emit('task:create', { agentId, description });
+      socket.emit('task:create', { agentId, description, sessionKey });
     } else {
       console.error('WebSocket not connected');
     }
   },
 
   simulateRequest: () => {
-    const { agents, sendTask } = get();
+    const { agents, sessions, sendTask } = get();
     const availableAgents = agents.filter((a) => a.status === 'idle' && a.energy > 10);
-    if (availableAgents.length === 0) return;
+    if (availableAgents.length === 0 || sessions.length === 0) return;
 
     const agent = availableAgents[Math.floor(Math.random() * availableAgents.length)];
-    sendTask(agent.id, 'Process this request');
+    const session = sessions[0]; // Use first session
+    sendTask(agent.id, 'Process this request', session.sessionKey);
   },
 
   simulateLoadSpike: () => {
-    const { agents, sendTask, setSystemStatus } = get();
+    const { agents, sessions, sendTask, setSystemStatus } = get();
     const availableAgents = agents.filter((a) => a.status === 'idle' && a.energy > 10);
+    if (sessions.length === 0) return;
 
+    const session = sessions[0];
     availableAgents.slice(0, 3).forEach((agent) => {
-      sendTask(agent.id, 'Handle load spike');
+      sendTask(agent.id, 'Handle load spike', session.sessionKey);
     });
 
     setSystemStatus('high-load');
