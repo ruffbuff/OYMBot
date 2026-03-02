@@ -1,131 +1,79 @@
-# 🏢 Open Your Mind Bot v0.1.4
+# Open Your Mind Bot
 
-AI Agent Platform с визуализированным офисом и мультиканальной поддержкой.
+A self-hosted, open-source platform for running autonomous AI agents. Inspired by OpenClaw, this project provides a robust backend, a visual frontend, and multi-channel support (CLI, Telegram).
 
-## 🚀 Быстрый старт
+## ✨ Features
+
+- **Autonomous Agents**: Agents can execute multi-step tasks, use tools, and learn from their actions.
+- **Tooling**: Built-in tools for file system access (`read`, `write`, `exec`) and internet search.
+- **Multi-Channel**: Interact with your agents via CLI, Telegram, or a web-based "Office" UI.
+- **Extensible**: Easily add new agents and tools.
+- **Real-time Monitoring**: A visual frontend and verbose CLI logging let you see your agent's thoughts and actions in real-time.
+
+## 🚀 Getting Started
+
+This project is divided into a `backend` (the agent gateway) and a `frontend` (the visual office).
+
+### 1. Backend Setup
+
+The backend runs the agent, manages sessions, and serves the API.
 
 ```bash
+# 1. Navigate to the backend directory
 cd backend
+
+# 2. Install dependencies
 npm install
-npm start
+
+# 3. Run the onboarding process to create your first agent
+# This will ask for your AI provider keys and create a .env file.
+npm run onboard
+
+# 4. Start the gateway server
+# The server will run on http://localhost:4001
+npm run gateway
 ```
 
-Готово! Можно чатиться с агентом.
+### 2. Interacting with Your Agent
 
-## ✨ Особенности
+You have three ways to chat with your agent:
 
-- 🎮 **Визуализированный офис** - мини-игра интерфейс для управления агентами
-- 💬 **Мультиканальность** - CLI, Telegram, Web (будущее: Discord, WhatsApp)
-- 🔄 **Изолированные сессии** - каждый канал имеет свою историю
-- 🎯 **Простота** - `npm start` и всё работает
-- 💾 **Персистентность** - сессии и история сохраняются
-- 🤖 **Правильные ответы** - агент знает свою модель (не путает с OpenClaw)
+**A) CLI Chat (Recommended for Power Users)**
 
-## 📚 Документация
+For direct and fast interaction.
 
-- [QUICKSTART.md](QUICKSTART.md) - быстрый старт (2 шага)
-- [ARCHITECTURE_COMPARISON.md](ARCHITECTURE_COMPARISON.md) - сравнение с OpenClaw
-- [TESTING_CHECKLIST.md](TESTING_CHECKLIST.md) - чеклист для тестирования
-- [CURRENT_STATUS.md](CURRENT_STATUS.md) - текущий статус проекта
-- [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) - полная документация
-
-## 🏗️ Архитектура
-
-```
-Gateway (порты 4000/4001)
-├── CLI/TUI (chalk)
-├── Telegram Bot
-├── Web UI (Next.js + офис-визуализация)
-└── Будущее: Discord, WhatsApp
-
-Сессии:
-- cli:local:agentId
-- telegram:userId:agentId
-- Web выбирает из существующих
-```
-
-## 🎯 Основные компоненты
-
-- **Gateway** - централизованный WebSocket hub
-- **AgentRuntime** - выполнение задач и управление агентами
-- **SessionManager** - изоляция сессий по каналам
-- **MemoryManager** - контекст и транскрипты
-- **CommandManager** - универсальные команды
-
-## 💬 Команды
-
-- `/help` - список команд
-- `/status` - статус агента
-- `/model` - показать/изменить модель
-- `/agents` - список агентов
-- `/sessions` - активные сессии
-- `/clear` - очистить контекст
-
-## 🔧 Технологии
-
-- **Backend**: Node.js 22+, TypeScript, Socket.io
-- **Frontend**: Next.js, React, Tailwind CSS
-- **CLI**: chalk, inquirer
-- **Конфиги**: Markdown (AGENT.md, SOUL.md)
-- **Хранение**: JSONL (транскрипты) + Markdown (контекст)
-
-## 📦 Структура проекта
-
-```
-backend/
-├── src/
-│   ├── agents/         # AgentRuntime
-│   ├── cli/            # CLI интерфейс
-│   ├── gateway/        # WebSocket сервер
-│   ├── services/       # Сервисы (LLM, Memory, Session, Tools, Commands)
-│   └── types/          # TypeScript типы
-├── agents/             # Агенты (AGENT.md, SOUL.md, sessions/)
-└── start.sh            # Скрипт запуска
-
-frontend/
-├── app/                # Next.js страницы
-├── components/         # React компоненты
-│   ├── agents/         # Компоненты агентов
-│   ├── office/         # Офис-визуализация
-│   └── ui/             # UI компоненты
-└── store/              # Zustand store
-```
-
-## 🧪 Тестирование
-
-См. [TESTING_CHECKLIST.md](TESTING_CHECKLIST.md) для полного чеклиста.
-
-Базовый тест:
 ```bash
-# 1. CLI
+# In a new terminal, while the gateway is running:
 cd backend
-npm start
-# Напишите: "what model are you using?"
-# Агент должен ответить правильно (не "OpenClaw")
+npm run chat
+```
 
-# 2. Web (в другом терминале)
+**B) Web UI (Visual Office)**
+
+For a visual representation of your agents.
+
+```bash
+# In a new terminal:
 cd frontend
 npm run dev
-# Откройте http://localhost:3000
 ```
+Open [http://localhost:3000](http://localhost:3000) in your browser. Your agent should appear in the office.
 
-## 🤝 Вклад
+**C) Telegram**
 
-Проект в активной разработке. Основано на идеях OpenClaw, но с уникальными фичами.
+If you configured a Telegram bot during onboarding, simply start a chat with your bot in the Telegram app.
 
-## 📄 Лицензия
+## 🔧 How It Works
 
-MIT
+- **Agents**: Each agent is defined by a set of Markdown files in the `backend/agents/` directory (e.g., `AGENT.md`, `MEMORY.md`).
+- **Gateway**: A central Node.js server that handles WebSocket connections, API requests, and agent task execution.
+- **Tools**: Agents can use tools like `shell_exec`, `search_web`, and `write_file` to interact with the environment.
+- **Sessions**: The system maintains separate conversation sessions for each channel (CLI, Web, Telegram).
 
-## 🙏 Благодарности
+##  roadmap
 
-- OpenClaw за вдохновение и архитектурные идеи
-- Сообщество за поддержку
+See [TODO.md](TODO.md) for the full project roadmap.
 
----
+## 🤝 Contributing
 
-**Статус**: ✅ Готово к тестированию
-
-**Версия**: 0.1.4
-
-**Дата**: 2026-03-02
+This project is in active development. Contributions, issues, and feature requests are welcome!

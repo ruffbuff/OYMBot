@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import { watch } from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
 import { AgentConfig } from '../../types/agent';
@@ -9,6 +10,40 @@ export class MemoryManager {
 
   constructor(agentsDir: string = './agents') {
     this.agentsDir = agentsDir;
+  }
+
+  /**
+   * Watch for changes in agent directories to trigger hot-reloads
+   */
+  watchAgents(callback: (agentId: string) => void): void {
+    try {
+      // Watch the root agents directory for new/deleted agents
+      watch(this.agentsDir, (eventType, filename) => {
+        if (filename && eventType === 'rename') {
+          // New agent directory created or old one deleted
+          logger.info(`Agent structure changed: ${filename}`);
+        }
+      });
+
+      // We'll also need to watch individual agent directories for AGENT.md changes
+      // This is done recursively or on-demand in a real-world scenario, 
+      // but for now let's set up a simpler watcher for known agents.
+      this.loadAllAgents().then(agents => {
+        for (const agent of agents) {
+          const agentMdPath = path.join(this.agentsDir, agent.id, 'AGENT.md');
+          watch(agentMdPath, (eventType) => {
+            if (eventType === 'change') {
+              logger.info(`Detected change in AGENT.md for agent: ${agent.id}`);
+              callback(agent.id);
+            }
+          });
+        }
+      });
+      
+      logger.info('Started watching agents directory for changes');
+    } catch (error) {
+      logger.error('Failed to start watching agents directory:', error);
+    }
   }
 
   // Load agent configuration from AGENT.md
@@ -66,24 +101,62 @@ export class MemoryManager {
     }
   }
 
-  // Update agent status
+  // Update agent status safely
   async updateAgentStatus(agentId: string, status: AgentConfig['status']): Promise<void> {
     const agentPath = path.join(this.agentsDir, agentId, 'AGENT.md');
     
     try {
       const content = await fs.readFile(agentPath, 'utf-8');
-      const { data, content: body } = matter(content);
+      const parsed = matter(content);
       
-      data.status = status;
-      data.updatedAt = new Date().toISOString();
+      parsed.data.status = status;
+      parsed.data.updatedAt = new Date().toISOString();
       
-      const updated = matter.stringify(body, data);
-      await fs.writeFile(agentPath, updated, 'utf-8');
+      const updated = matter.stringify(parsed.content, parsed.data);
+      // Atomic-like write: write to temp then rename
+      const tempPath = `${agentPath}.tmp`;
+      await fs.writeFile(tempPath, updated, 'utf-8');
+      await fs.rename(tempPath, agentPath);
       
       logger.info(`Updated agent ${agentId} status to ${status}`);
     } catch (error) {
       logger.error(`Failed to update agent ${agentId} status:`, error);
-      throw error;
+    }
+  }
+
+  // Append a permanent fact to MEMORY.md
+  async addLongTermMemory(agentId: string, fact: string): Promise<void> {
+    const memoryPath = path.join(this.agentsDir, agentId, 'MEMORY.md');
+    try {
+      const timestamp = new Date().toISOString().split('T')[0];
+      const entry = `\n- [${timestamp}] ${fact}\n`;
+      await fs.appendFile(memoryPath, entry, 'utf-8');
+      logger.info(`✅ Added long-term memory for ${agentId}`);
+    } catch (error) {
+      logger.error(`Failed to add memory for ${agentId}:`, error);
+    }
+  }
+
+  // Update agent skills safely
+  async updateAgentSkills(agentId: string, skills: string[]): Promise<void> {
+    const agentPath = path.join(this.agentsDir, agentId, 'AGENT.md');
+    try {
+      const content = await fs.readFile(agentPath, 'utf-8');
+      const parsed = matter(content);
+      
+      // Merge unique skills
+      const currentSkills = parsed.data.skills || [];
+      const newSkills = [...new Set([...currentSkills, ...skills])];
+      
+      parsed.data.skills = newSkills;
+      parsed.data.updatedAt = new Date().toISOString();
+      
+      const updated = matter.stringify(parsed.content, parsed.data);
+      await fs.writeFile(agentPath, updated, 'utf-8');
+      
+      logger.info(`✅ Updated skills for agent ${agentId}: ${newSkills.join(', ')}`);
+    } catch (error) {
+      logger.error(`Failed to update skills for agent ${agentId}:`, error);
     }
   }
 

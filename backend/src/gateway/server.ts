@@ -49,6 +49,21 @@ export class GatewayServer {
     );
     this.agentRuntime = new AgentRuntime(this.memoryManager, this.llmManager);
 
+    // Setup Agent Step Monitoring (Verbose)
+    this.agentRuntime.onStep = (data) => {
+      logger.info(`🔄 Agent step detected: ${data.agentId}, step: ${data.step}`);
+      // Send thought/action to all connected clients
+      this.io.emit('agent:step', {
+        agentId: data.agentId,
+        step: data.step,
+        thought: data.thought,
+        tool: data.tool,
+        params: data.params,
+        result: data.result,
+        timestamp: new Date().toISOString()
+      });
+    };
+
     this.setupMiddleware();
     this.setupRoutes();
     this.setupWebSocket();
@@ -210,9 +225,17 @@ export class GatewayServer {
           });
         } catch (error) {
           logger.error('Task execution failed:', error);
+          
+          // CRITICAL: Update status to error on frontend
+          this.io.emit('agent:status', {
+            agentId: data.agentId,
+            status: 'error',
+            sessionKey: data.sessionKey,
+          });
+
           socket.emit('task:error', {
             agentId: data.agentId,
-            error: 'Task execution failed',
+            error: error instanceof Error ? error.message : 'Task execution failed',
           });
         }
       });
@@ -231,8 +254,8 @@ export class GatewayServer {
     this.telegramBot = new TelegramBotService(this.agentRuntime, this.sessionManager, this.io);
 
     return new Promise((resolve) => {
-      this.httpServer.listen(this.config.wsPort, () => {
-        logger.info(`Gateway server listening on port ${this.config.wsPort}`);
+      this.httpServer.listen(this.config.port, () => {
+        logger.info(`✅ Gateway server listening on port ${this.config.port}`);
         logger.info(`WebSocket server ready`);
         logger.info(`Loaded ${this.agentRuntime.getAllAgents().length} agents`);
         resolve();

@@ -3,21 +3,21 @@ import path from 'path';
 import { GatewayServer } from './gateway/server';
 import { logger } from './utils/logger';
 
-// Load environment variables from root .env
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+// Load environment variables from backend directory
+dotenv.config();
 
 async function main() {
   try {
     logger.info('Starting AI Office Backend...');
 
-    const server = new GatewayServer({
-      port: parseInt(process.env.PORT || '4000'),
-      wsPort: parseInt(process.env.WS_PORT || '4001'),
-    });
+    // Standardize on 4001 (OpenClaw port), hardcoded to avoid .env conflicts
+    const port = 4001;
+
+    const server = new GatewayServer({ port });
 
     await server.start();
 
-    logger.info('AI Office Backend started successfully');
+    logger.info(`AI Office Backend started on port ${port}`);
 
     // Graceful shutdown
     process.on('SIGTERM', async () => {

@@ -209,7 +209,20 @@ Type /help for more information.`;
         });
       } catch (error) {
         logger.error(`Telegram message error for agent ${agentId}:`, error);
-        await bot.sendMessage(chatId, '❌ Error processing your message');
+        
+        // CRITICAL: Update status to error on frontend
+        this.io.emit('agent:status', { 
+          agentId, 
+          status: 'error',
+          sessionKey: `telegram:${chatId}:${agentId}` 
+        });
+
+        let errorMessage = '❌ Sorry, I encountered an error processing your message.';
+        if (error instanceof Error && error.message.includes('API key')) {
+          errorMessage = '❌ Error: AI Provider API key is not configured correctly. Please check your .env file.';
+        }
+        
+        await bot.sendMessage(chatId, errorMessage);
       }
     });
 
