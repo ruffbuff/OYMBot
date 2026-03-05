@@ -1,28 +1,158 @@
 # 🎯 TODO: Project Roadmap
 
-## 🏛️ Core Architecture
+## ✅ Completed (v0.2.0)
 - [x] **Basic Gateway & Runtime**
-- [ ] **Memory Architecture**: Finalize the long-term memory system. Implement vector-based search (like in ZeroClaw).
-- [ ] **Config Logic**: Improve the agent configuration (`AGENT.md`).
-- [x] **Context Control**: Basic session-aware context implemented.
-- [ ] **Advanced Context Control**: Implement token-aware manager for different model windows.
+- [x] **Context Control**: Session-aware context implemented
+- [x] **Basic Blessed TUI**: Chat and thoughts panels
+- [x] **Basic Tool System**: File access, shell exec, web search, codebase search
+- [x] **Fix CLI Session Creation**: CLI sessions registered in Gateway
+- [x] **Robust Tool Parsing**: Agent JSON parsing fixed
+- [x] **Frontend Session Selection**: Web UI picks existing sessions
+- [x] **Unified CLI**: Single `npm run chat` command
+- [x] **Autonomous Planner**: Architect + Engineer mode for complex tasks
+- [x] **Hot-reload**: Auto-reload AGENT.md on changes
+- [x] **Full FS Access**: Absolute paths, relative paths, ~ support
+- [x] **SOUL.md Integration**: Personality loaded into system prompt
 
-## 🖥️ CLI / TUI
-- [x] **Basic Blessed TUI**: Implemented with chat and thoughts panels.
-- [ ] **Advanced TUI**: Add real-time resource monitoring (RAM/CPU) and model selection.
-- [ ] **CLI Onboarding**: Improve the onboarding UX.
+## 🔴 Critical (Must Have)
 
-## 🧩 Extensibility
-- [x] **Basic Tool System**: File access, shell exec, web search.
-- [ ] **Firecrawl Integration**: For better web scraping.
-- [ ] **App Integrations**: Notion, Obsidian.
+### Security & Safety
+- [ ] **Tool Policies System**: Layered policies (global → agent → group → sandbox)
+  - [ ] Tool groups (group:fs, group:runtime, group:network)
+  - [ ] Per-agent tool allowlist/denylist
+  - [ ] Per-channel tool restrictions
+  - [ ] Dangerous command confirmation
+- [ ] **Sandboxed Execution**: Workspace isolation for file operations
+  - [ ] Restrict file access to workspace by default
+  - [ ] Whitelist for absolute paths
+  - [ ] Safe shell command execution
+- [ ] **Telegram Whitelist**: Restrict access by User ID
+- [ ] **Rate Limiting**: Prevent abuse
 
-## 🔐 Security
-- [ ] **Telegram Whitelist**: Restrict access by User ID.
-- [ ] **Sandboxed Exec**: More secure way to run shell commands.
+### Plugin System
+- [ ] **Plugin Architecture**: Hook-based extensibility (like OpenClaw)
+  - [ ] before_tool_call / after_tool_call hooks
+  - [ ] before_agent_start / agent_end hooks
+  - [ ] message_received / message_sent hooks
+  - [ ] Plugin registry and loader
+- [ ] **Plugin Tools**: Plugins can register custom tools
+- [ ] **Plugin Commands**: Plugins can add custom commands
 
-## 🛠️ Current Bugfix Tasks
-- [x] **Fix CLI Session Creation**: Ensure CLI sessions are registered in Gateway.
-- [x] **Robust Tool Parsing**: Fix agent sending raw JSON to chat.
-- [x] **Frontend Session Selection**: Allow Web UI to pick existing sessions.
-- [x] **Unified CLI**: Move to a single `npm run chat` command.
+## 🟡 Important (Should Have)
+
+### Memory & Context
+- [ ] **Memory Search**: Semantic search in MEMORY.md + memory/*.md
+  - [ ] memory_search tool
+  - [ ] memory_get tool
+  - [ ] Vector embeddings (optional)
+- [ ] **Advanced Context Control**: Token-aware manager for different model windows
+- [ ] **Daily Memory Logs**: Automatic memory/YYYY-MM-DD.md files
+- [ ] **Memory Compaction**: Automatic summarization of old memories
+
+### Skills System
+- [ ] **Skills Architecture**: Reusable prompt templates
+  - [ ] Workspace skills (workspace/skills/)
+  - [ ] Global skills (~/.oym-bot/skills/)
+  - [ ] Skill loading and injection
+- [ ] **Skill Marketplace**: Browse and install community skills
+
+### Multi-Agent
+- [ ] **Subagents**: Spawn child agents for subtasks
+  - [ ] sessions_spawn tool
+  - [ ] sessions_send tool
+  - [ ] sessions_list tool
+- [ ] **Agent Routing**: Route messages to different agents
+- [ ] **Agent Collaboration**: Agents can work together
+
+### Advanced Tools
+- [ ] **Browser Tool**: Headless browser control (Playwright/Puppeteer)
+- [ ] **Firecrawl Integration**: Better web scraping
+- [ ] **App Integrations**: Notion, Obsidian, Linear
+- [ ] **Image Generation**: DALL-E, Stable Diffusion
+- [ ] **TTS/STT**: Voice input/output
+
+## 🟢 Nice to Have (Could Have)
+
+### UI/UX
+- [ ] **Advanced TUI**: Real-time resource monitoring (RAM/CPU)
+- [ ] **Model Selection in TUI**: Switch models on the fly
+- [ ] **CLI Onboarding**: Improved UX with better prompts
+- [ ] **Web UI Improvements**: 
+  - [ ] Plan visualization
+  - [ ] Tool execution timeline
+  - [ ] Agent status dashboard
+
+### Infrastructure
+- [ ] **Cron Jobs**: Scheduled tasks
+- [ ] **Webhooks**: External integrations
+- [ ] **API Gateway**: REST API for external access
+- [ ] **Docker Support**: Containerized deployment
+- [ ] **Cloud Deployment**: Deploy to cloud providers
+
+### Channels
+- [ ] **Discord Integration**
+- [ ] **Slack Integration**
+- [ ] **WhatsApp Integration**
+- [ ] **Signal Integration**
+- [ ] **iMessage Integration** (macOS only)
+
+### Developer Experience
+- [ ] **Testing Suite**: Unit and integration tests
+- [ ] **Documentation**: API docs, architecture docs
+- [ ] **Examples**: Sample agents and use cases
+- [ ] **Debugging Tools**: Better logging and tracing
+
+## 🎨 Unique Features (Our Differentiators)
+
+### Already Implemented ✅
+- [x] **Autonomous Planner**: Break down complex tasks automatically
+- [x] **Visual Office**: Mini-game interface for agent management
+- [x] **Dual Mode**: Reactive (simple) + Planner (complex)
+- [x] **Hot-reload**: Live config updates
+
+### Planned 🚀
+- [ ] **Agent Personalities**: Rich personality system beyond SOUL.md
+- [ ] **Learning System**: Agents learn from interactions
+- [ ] **Workflow Builder**: Visual workflow creation
+- [ ] **Agent Marketplace**: Share and discover agents
+- [ ] **Collaborative Agents**: Multiple agents working on same task
+
+## 📊 Version Milestones
+
+### v0.2.0 (Current) ✅
+- Autonomous Planner
+- Full FS access
+- SOUL.md integration
+- Hot-reload
+
+### v0.3.0 (Next)
+- Tool Policies
+- Plugin System
+- Memory Search
+- Sandboxed Execution
+
+### v0.4.0
+- Skills System
+- Subagents
+- Browser Tool
+- Advanced TUI
+
+### v1.0.0 (Stable)
+- All critical features
+- Production-ready security
+- Full documentation
+- Testing suite
+
+## 🐛 Known Issues
+- [ ] TypeScript errors in some files (need npm install)
+- [ ] Session persistence could be improved
+- [ ] Error handling in planner needs work
+- [ ] Tool execution timeout handling
+
+## 💡 Ideas for Future
+- Agent-to-agent communication protocol
+- Distributed agent network
+- Agent memory sharing
+- Agent specialization (coding, writing, research)
+- Integration with external AI services
+- Mobile app for agent management
