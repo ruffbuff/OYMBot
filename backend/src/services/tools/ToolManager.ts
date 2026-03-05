@@ -2,8 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { logger } from '../../utils/logger';
-import { MemoryManager } from '../memory/MemoryManager';
+import { logger } from '../../utils/logger.js';
+import { MemoryManager } from '../memory/MemoryManager.js';
 
 const execPromise = promisify(exec);
 
@@ -27,13 +27,20 @@ export class ToolManager {
     // File System Tools
     this.registerTool({
       name: 'read_file',
-      description: 'Read contents of a file',
+      description: 'Read contents of a file (supports absolute paths, relative paths, and ~ for home)',
       parameters: {
-        path: 'string - relative or absolute file path',
+        path: 'string - file path (absolute: /path/to/file, relative: ./file, home: ~/file)',
       },
       execute: async (params: { path: string }) => {
         try {
-          const content = await fs.readFile(params.path, 'utf-8');
+          // Expand ~ to home directory
+          let filePath = params.path;
+          if (filePath.startsWith('~/')) {
+            const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+            filePath = path.join(homeDir, filePath.slice(2));
+          }
+          
+          const content = await fs.readFile(filePath, 'utf-8');
           return `File content:\n\n${content}`;
         } catch (error) {
           return `Error reading file: ${error}`;
@@ -43,13 +50,20 @@ export class ToolManager {
 
     this.registerTool({
       name: 'list_directory',
-      description: 'List files and directories in a path',
+      description: 'List files and directories in a path (supports absolute, relative, and ~ paths)',
       parameters: {
-        path: 'string - directory path (default: current directory)',
+        path: 'string - directory path (absolute: /path, relative: ./path, home: ~/path, default: current)',
       },
       execute: async (params: { path?: string }) => {
         try {
-          const dirPath = params.path || '.';
+          let dirPath = params.path || '.';
+          
+          // Expand ~ to home directory
+          if (dirPath.startsWith('~/')) {
+            const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+            dirPath = path.join(homeDir, dirPath.slice(2));
+          }
+          
           const items = await fs.readdir(dirPath, { withFileTypes: true });
           const list = items.map((item) => {
             const type = item.isDirectory() ? '[DIR]' : '[FILE]';
@@ -64,14 +78,13 @@ export class ToolManager {
 
     this.registerTool({
       name: 'write_file',
-      description: 'Write content to a file (PROTECTED: Cannot overwrite configuration files)',
+      description: 'Write content to a file (supports absolute, relative, and ~ paths). PROTECTED: Cannot overwrite agent config files.',
       parameters: {
-        path: 'string - file path',
+        path: 'string - file path (absolute: /path/to/file, relative: ./file, home: ~/file)',
         content: 'string - content to write',
       },
       execute: async (params: { path: string; content: string }) => {
         try {
-          // PROTECTED FILENAMES: Prevent agent from overwriting its core files via write_file
           const forbiddenFiles = ['AGENT.md', 'MEMORY.md', 'CONTEXT.md', '.env'];
           const filename = path.basename(params.path);
           
@@ -79,8 +92,19 @@ export class ToolManager {
             return `Error: Writing directly to ${filename} is forbidden for security. Use 'remember_fact' or 'update_skills' tools instead.`;
           }
 
-          await fs.writeFile(params.path, params.content, 'utf-8');
-          return `Successfully wrote to ${params.path}`;
+          // Expand ~ to home directory
+          let filePath = params.path;
+          if (filePath.startsWith('~/')) {
+            const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+            filePath = path.join(homeDir, filePath.slice(2));
+          }
+
+          // Create directory if it doesn't exist
+          const dir = path.dirname(filePath);
+          await fs.mkdir(dir, { recursive: true });
+
+          await fs.writeFile(filePath, params.content, 'utf-8');
+          return `Successfully wrote to ${filePath}`;
         } catch (error) {
           return `Error writing file: ${error}`;
         }
@@ -90,34 +114,34 @@ export class ToolManager {
     // Agent Self-Improvement & Memory Tools
     this.registerTool({
       name: 'remember_fact',
-      description: 'Save an important fact or observation to your long-term memory (MEMORY.md) for future sessions.',
+      description: 'Save an important fact to MEMORY.md',
       parameters: {
-        fact: 'string - the fact or learning to remember permanently',
+        fact: 'string - fact to remember',
       },
       execute: async (params: { fact: string }, agentId?: string) => {
-        if (!agentId) return 'Error: agentId is missing. Could not save to memory.';
+        if (!agentId) return 'Error: agentId missing';
         try {
           await this.memoryManager.addLongTermMemory(agentId, params.fact);
           return `✅ Fact remembered: "${params.fact}"`;
         } catch (error) {
-          return `Error saving to memory: ${error}`;
+          return `Error: ${error}`;
         }
       },
     });
 
     this.registerTool({
       name: 'update_skills',
-      description: 'Add new skills or technologies you have learned to your profile (AGENT.md).',
+      description: 'Add new skills to AGENT.md',
       parameters: {
-        skills: 'array of strings - list of new skills to add',
+        skills: 'array of strings - new skills',
       },
       execute: async (params: { skills: string[] }, agentId?: string) => {
-        if (!agentId) return 'Error: agentId is missing. Could not update skills.';
+        if (!agentId) return 'Error: agentId missing';
         try {
           await this.memoryManager.updateAgentSkills(agentId, params.skills);
           return `✅ Skills updated: ${params.skills.join(', ')}`;
         } catch (error) {
-          return `Error updating skills: ${error}`;
+          return `Error: ${error}`;
         }
       },
     });
@@ -125,23 +149,131 @@ export class ToolManager {
     // Shell Execution Tool
     this.registerTool({
       name: 'shell_exec',
-      description: 'Execute a shell command in the terminal',
+      description: 'Execute a shell command',
       parameters: {
-        command: 'string - the command to execute (e.g., "npm test", "ls -la")',
+        command: 'string - command to execute',
       },
       execute: async (params: { command: string }) => {
         try {
           logger.info(`Executing shell command: ${params.command}`);
           const { stdout, stderr } = await execPromise(params.command);
-          
           let result = '';
           if (stdout) result += `STDOUT:\n${stdout}\n`;
           if (stderr) result += `STDERR:\n${stderr}\n`;
-          
-          return result || 'Command executed successfully (no output)';
+          return result || 'Command executed successfully';
         } catch (error: any) {
-          logger.error(`Shell execution error: ${error.message}`);
-          return `Error executing command: ${error.message}\n${error.stderr || ''}`;
+          return `Error: ${error.message}\n${error.stderr || ''}`;
+        }
+      },
+    });
+
+    // File Search Tool (Grep-like)
+    this.registerTool({
+      name: 'search_files',
+      description: 'Search for a text pattern or keyword inside files in the project',
+      parameters: {
+        pattern: 'string - text to search for',
+        directory: 'string - directory to search in (default: current)',
+      },
+      execute: async (params: { pattern: string; directory?: string }) => {
+        try {
+          const dir = params.directory || '.';
+          // Using native grep for speed
+          const { stdout } = await execPromise(`grep -rni "${params.pattern}" ${dir} --exclude-dir=node_modules --exclude-dir=.next --max-count=20`);
+          return stdout || `No matches found for "${params.pattern}"`;
+        } catch (error: any) {
+          return `No matches found or error: ${error.message}`;
+        }
+      },
+    });
+
+    // Advanced codebase search (for planner)
+    this.registerTool({
+      name: 'search_codebase',
+      description: 'Search for patterns in codebase using grep (excludes node_modules, .git, etc.)',
+      parameters: {
+        pattern: 'string - regex pattern to search',
+        filePattern: 'string - file pattern (e.g., "*.ts", "*.js") - optional',
+      },
+      execute: async (params: { pattern: string; filePattern?: string }) => {
+        try {
+          let command = `grep -rni "${params.pattern}" . --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next --exclude-dir=dist --max-count=30`;
+          
+          if (params.filePattern) {
+            command += ` --include="${params.filePattern}"`;
+          }
+          
+          const { stdout } = await execPromise(command);
+          return stdout || `No matches found for pattern "${params.pattern}"`;
+        } catch (error: any) {
+          if (error.code === 1) {
+            return `No matches found for pattern "${params.pattern}"`;
+          }
+          return `Search error: ${error.message}`;
+        }
+      },
+    });
+
+    // Get file tree (for planner to understand project structure)
+    this.registerTool({
+      name: 'get_file_tree',
+      description: 'Get recursive directory structure (tree view)',
+      parameters: {
+        path: 'string - directory path (default: current)',
+        maxDepth: 'number - maximum depth (default: 3)',
+      },
+      execute: async (params: { path?: string; maxDepth?: number }) => {
+        try {
+          const dirPath = params.path || '.';
+          const maxDepth = params.maxDepth || 3;
+          
+          // Use tree command if available, otherwise use find
+          try {
+            const { stdout } = await execPromise(`tree -L ${maxDepth} -I 'node_modules|.git|.next|dist' ${dirPath}`);
+            return `File tree:\n\n${stdout}`;
+          } catch {
+            // Fallback to find if tree is not available
+            const { stdout } = await execPromise(`find ${dirPath} -maxdepth ${maxDepth} -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/.next/*' | head -100`);
+            return `File structure:\n\n${stdout}`;
+          }
+        } catch (error: any) {
+          return `Error getting file tree: ${error.message}`;
+        }
+      },
+    });
+
+    // Advanced Web Scraper
+    this.registerTool({
+      name: 'scrape_website',
+      description: 'Deeply scrape a website to get its full text content, useful for reading documentation',
+      parameters: {
+        url: 'string - valid URL starting with http/https',
+      },
+      execute: async (params: { url: string }) => {
+        try {
+          if (!params.url.startsWith('http')) return 'Error: Invalid URL';
+          logger.info(`Scraping website: ${params.url}`);
+          
+          const response = await fetch(params.url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+          });
+          
+          if (!response.ok) return `Error: HTTP ${response.status}`;
+          const html = await response.text();
+          
+          // Better extraction: remove scripts, styles, and junk
+          const text = html
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+            .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+            
+          return `Content from ${params.url} (first 8000 chars):\n\n${text.slice(0, 8000)}...`;
+        } catch (error: any) {
+          return `Scrape error: ${error.message}`;
         }
       },
     });
@@ -149,113 +281,59 @@ export class ToolManager {
     // Environment Context Tool
     this.registerTool({
       name: 'get_working_directory',
-      description: 'Get the current working directory of the process',
+      description: 'Get current directory',
       parameters: {},
       execute: async () => {
-        return `Current working directory: ${process.cwd()}`;
+        return `Current directory: ${process.cwd()}`;
       },
     });
 
-    // Web Search Tool (enhanced)
+    // Web Search Tools
     this.registerTool({
       name: 'search_web',
-      description: 'Search the internet for information using DuckDuckGo',
-      parameters: {
-        query: 'string - the search query',
-      },
+      description: 'Search internet using DuckDuckGo',
+      parameters: { query: 'string - search query' },
       execute: async (params: { query: string }) => {
         try {
-          logger.info(`Searching web for: ${params.query}`);
-          // Using DuckDuckGo html search (simple, no API key needed)
           const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(params.query)}`;
-          const response = await fetch(url, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            },
+          const response = await fetch(url, { 
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+            } 
           });
-
-          if (!response.ok) return `Error: Could not reach search engine (HTTP ${response.status})`;
-
+          if (!response.ok) return 'Error reaching search engine';
           const html = await response.text();
-          // Extract results using simple regex (since we don't want heavy dependencies yet)
+          
+          // More robust regex for DDG HTML
           const results: string[] = [];
-          const resultRegex = /<a class="result__a" rel="noopener" href="([^"]+)">([^<]+)<\/a>/g;
+          const resultRegex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
           let match;
           let count = 0;
-          
           while ((match = resultRegex.exec(html)) !== null && count < 5) {
-            results.push(`${count + 1}. ${match[2]}\n   URL: ${match[1]}`);
-            count++;
+            const title = match[2].replace(/<[^>]+>/g, '').trim();
+            const link = match[1];
+            if (link.startsWith('http')) {
+              results.push(`${count + 1}. ${title}\n   URL: ${link}`);
+              count++;
+            }
           }
-
-          if (results.length === 0) {
-            return `No results found for "${params.query}". Try a different query.`;
-          }
-
-          return `Search results for "${params.query}":\n\n${results.join('\n\n')}\n\nTip: You can use 'web_search' with a URL from these results to read more details.`;
-        } catch (error: any) {
-          logger.error('Search error:', error);
-          return `Error performing search: ${error.message}`;
-        }
+          return results.length > 0 ? results.join('\n\n') : 'No results found. Try a different query.';
+        } catch (error: any) { return `Error: ${error.message}`; }
       },
     });
 
-    // Web Search Tool (simple fetch)
     this.registerTool({
       name: 'web_search',
-      description: 'Fetch content from a URL or search the web',
-      parameters: {
-        query: 'string - URL to fetch (must start with http:// or https://)',
-      },
+      description: 'Fetch content from URL',
+      parameters: { query: 'string - URL' },
       execute: async (params: { query: string }) => {
         try {
-          // Check if it's a URL
-          if (!params.query.startsWith('http://') && !params.query.startsWith('https://')) {
-            return 'Error: Please provide a valid URL starting with http:// or https://';
-          }
-
-          logger.info(`Fetching URL: ${params.query}`);
-          
-          const response = await fetch(params.query, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (compatible; AI-Office-Bot/1.0)',
-            },
-          });
-
-          if (!response.ok) {
-            return `Error: HTTP ${response.status} - ${response.statusText}`;
-          }
-
-          const contentType = response.headers.get('content-type') || '';
-          
-          // Handle HTML content
-          if (contentType.includes('text/html')) {
-            const html = await response.text();
-            // Simple text extraction - remove HTML tags
-            const text = html
-              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim();
-            
-            // Limit response size
-            const limitedText = text.slice(0, 8000);
-            return `Content from ${params.query}:\n\n${limitedText}${text.length > 8000 ? '\n\n[Content truncated...]' : ''}`;
-          }
-          
-          // Handle plain text
-          if (contentType.includes('text/plain')) {
-            const text = await response.text();
-            const limitedText = text.slice(0, 8000);
-            return `Content from ${params.query}:\n\n${limitedText}${text.length > 8000 ? '\n\n[Content truncated...]' : ''}`;
-          }
-
-          return `Error: Unsupported content type: ${contentType}`;
-        } catch (error) {
-          logger.error('Web search error:', error);
-          return `Error fetching URL: ${error instanceof Error ? error.message : String(error)}`;
-        }
+          if (!params.query.startsWith('http')) return 'Error: Invalid URL';
+          const response = await fetch(params.query);
+          if (!response.ok) return `Error: ${response.status}`;
+          const text = (await response.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          return text.slice(0, 5000);
+        } catch (error: any) { return `Error: ${error.message}`; }
       },
     });
 
@@ -280,31 +358,16 @@ export class ToolManager {
 
   getToolsDescription(disabledTools: string[] = []): string {
     const tools = this.getEnabledTools(disabledTools);
-    
-    if (tools.length === 0) {
-      return 'No tools available';
-    }
-    
-    return tools
-      .map((tool) => {
-        const params = Object.entries(tool.parameters)
-          .map(([key, desc]) => `  - ${key}: ${desc}`)
-          .join('\n');
-        return `${tool.name}:\n  ${tool.description}\n  Parameters:\n${params}`;
-      })
-      .join('\n\n');
+    if (tools.length === 0) return 'No tools available';
+    return tools.map((t) => `${t.name}: ${t.description}`).join('\n');
   }
 
-  async executeTool(name: string, params: any): Promise<string> {
+  async executeTool(name: string, params: any, agentId?: string): Promise<string> {
     const tool = this.getTool(name);
-    if (!tool) {
-      return `Tool "${name}" not found`;
-    }
-
+    if (!tool) return `Tool "${name}" not found`;
     try {
-      return await tool.execute(params);
+      return await tool.execute(params, agentId);
     } catch (error) {
-      logger.error(`Tool execution error (${name}):`, error);
       return `Error executing tool: ${error}`;
     }
   }

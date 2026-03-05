@@ -2,7 +2,11 @@
 import inquirer from 'inquirer';
 import fs from 'fs/promises';
 import path from 'path';
-import { logger } from '../utils/logger';
+import { fileURLToPath } from 'url';
+import { logger } from '../utils/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 interface OnboardConfig {
   agentName: string;
@@ -164,8 +168,7 @@ async function createEnvFile(config: OnboardConfig): Promise<void> {
   }
 
   envContent += `\n# Server Configuration
-PORT=4000
-WS_PORT=4001
+PORT=4001
 FRONTEND_URL=http://localhost:3000
 
 # Agent Directory
@@ -204,13 +207,20 @@ skills:
   - conversation
   - help
   - analysis
-tools:
+  tools:
   enabled:
     - read_file
     - list_directory
     - write_file
     - web_search
+    - shell_exec
+    - search_web
+    - remember_fact
+    - update_skills
+    - search_files
+    - scrape_website
   disabled: []
+
 memory:
   enabled: true
   vectorSearch: false
@@ -225,11 +235,11 @@ capabilities:
   - web_browsing
   - file_operations
 permissions:
-  canModifyConfig: false
+  canModifyConfig: true
   canModifyMemory: true
-  canExecuteCommands: false
+  canExecuteCommands: true
   canAccessNetwork: true
-  canModifyFiles: false
+  canModifyFiles: true
 ---
 
 # Agent Configuration
@@ -295,7 +305,7 @@ I am ${config.agentName}, your AI assistant focused on helping you with tasks an
 }
 
 // Run onboard if called directly
-if (require.main === module) {
+if (import.meta.url === `file://${fileURLToPath(process.argv[1])}`) {
   onboard();
 }
 

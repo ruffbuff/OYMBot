@@ -26,6 +26,7 @@ export interface AgentConfig {
   telegram?: {
     token: string;
     enabled: boolean;
+    allowedUsers?: string[]; // List of user IDs or usernames
   };
   whatsapp?: {
     enabled: boolean;
@@ -54,5 +55,28 @@ export interface Task {
   status: 'pending' | 'running' | 'completed' | 'failed';
   result?: string;
   createdAt: Date;
+  completedAt?: Date;
+}
+
+// Planner types for autonomous task execution
+export interface AgentStep {
+  id: number;
+  action: string; // tool name: shell_exec, write_file, read_file, etc.
+  params: Record<string, any>;
+  description: string; // human-readable description
+  validation?: string; // how to verify success
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+  result?: string;
+  error?: string;
+}
+
+export interface AgentPlan {
+  id: string;
+  taskDescription: string;
+  steps: AgentStep[];
+  currentStepIndex: number;
+  status: 'planning' | 'executing' | 'completed' | 'failed';
+  createdAt: Date;
+  updatedAt: Date;
   completedAt?: Date;
 }

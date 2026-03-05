@@ -5,16 +5,15 @@ import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
-import { logger } from '../utils/logger';
-import { MemoryManager } from '../services/memory/MemoryManager';
-import { LLMManager } from '../services/llm/LLMManager';
-import { AgentRuntime } from '../agents/AgentRuntime';
-import { SessionManager } from '../services/session/SessionManager';
-import { TelegramBotService } from '../services/telegram/TelegramBot';
+import { logger } from '../utils/logger.js';
+import { MemoryManager } from '../services/memory/MemoryManager.js';
+import { LLMManager } from '../services/llm/LLMManager.js';
+import { AgentRuntime } from '../agents/AgentRuntime.js';
+import { SessionManager } from '../services/session/SessionManager.js';
+import { TelegramBotService } from '../services/telegram/TelegramBot.js';
 
 interface ServerConfig {
   port: number;
-  wsPort: number;
 }
 
 export class GatewayServer {
@@ -34,20 +33,17 @@ export class GatewayServer {
     this.httpServer = createServer(this.app);
     this.io = new SocketIOServer(this.httpServer, {
       cors: {
-        origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+        origin: '*', // Allow all origins for simpler development
         methods: ['GET', 'POST'],
       },
     });
 
     // Initialize services
-    this.memoryManager = new MemoryManager(
-      process.env.AGENTS_DIR || path.join(process.cwd(), 'agents')
-    );
+    const agentsDir = process.env.AGENTS_DIR || path.join(process.cwd(), 'agents');
+    this.memoryManager = new MemoryManager(agentsDir);
     this.llmManager = new LLMManager();
-    this.sessionManager = new SessionManager(
-      process.env.AGENTS_DIR || path.join(process.cwd(), 'agents')
-    );
-    this.agentRuntime = new AgentRuntime(this.memoryManager, this.llmManager);
+    this.sessionManager = new SessionManager(agentsDir);
+    this.agentRuntime = new AgentRuntime(this.memoryManager, this.llmManager, this.sessionManager);
 
     // Setup Agent Step Monitoring (Verbose)
     this.agentRuntime.onStep = (data) => {
@@ -91,13 +87,14 @@ export class GatewayServer {
 
     // Get all agents
     this.app.get('/api/agents', (_req, res) => {
-      const agents = this.agentRuntime.getAllAgents().map((agent, index) => ({
+      const agents = this.agentRuntime.getAllAgents().map((agent) => ({
         id: agent.id,
         name: agent.name,
         type: agent.type,
         status: agent.status,
         energy: agent.energy,
-        position: { x: 0, y: 0 }, // Position handled by frontend
+        llm: agent.llm,
+        position: { x: 0, y: 0 },
       }));
       res.json({ agents });
     });
@@ -135,11 +132,12 @@ export class GatewayServer {
           type: agent.type,
           status: agent.status,
           energy: agent.energy,
-          position: { x: 0, y: 0 }, // Position handled by frontend
+          llm: agent.llm,
+          position: { x: 0, y: 0 },
         })),
       });
 
-      // Send active sessions (CLI + Telegram + other channels)
+      // Send active sessions
       socket.emit('sessions:list', {
         sessions: this.sessionManager.getAllSessions().map(session => ({
           sessionKey: session.sessionKey,
@@ -151,36 +149,27 @@ export class GatewayServer {
         })),
       });
 
-      // Handle agent selection
-      socket.on('agent:select', (data: { agentId: string }) => {
-        logger.info(`Agent selected: ${data.agentId}`);
-      });
-
-      // Handle task creation - MUST provide sessionKey (from CLI or Telegram)
+      // Handle task creation
       socket.on('task:create', async (data: { agentId: string; description: string; sessionKey: string }) => {
         try {
-          // Web MUST select an existing session (CLI or Telegram)
           if (!data.sessionKey) {
-            socket.emit('task:error', {
-              agentId: data.agentId,
-              error: 'Session key is required. Please select a session (CLI or Telegram) first.',
-            });
+            socket.emit('task:error', { agentId: data.agentId, error: 'Session key is required.' });
             return;
           }
 
-          const session = this.sessionManager.getSession(data.sessionKey);
-
-          if (!session) {
-            socket.emit('task:error', {
-              agentId: data.agentId,
-              error: `Session ${data.sessionKey} not found. Available sessions: ${this.sessionManager.getAllSessions().map(s => s.sessionKey).join(', ')}`,
-            });
+          const sessionInfo = SessionManager.parseSessionKey(data.sessionKey);
+          if (!sessionInfo) {
+            socket.emit('task:error', { agentId: data.agentId, error: 'Invalid session key.' });
             return;
           }
 
-          logger.info(`Web continuing session: ${session.sessionKey} (${session.channel})`);
+          const session = this.sessionManager.getOrCreateSession(
+            sessionInfo.channel,
+            sessionInfo.userId,
+            sessionInfo.agentId
+          );
 
-          // Broadcast status update to all clients
+          // Broadcast status update
           this.io.emit('agent:status', {
             agentId: data.agentId,
             status: 'thinking',
@@ -190,13 +179,12 @@ export class GatewayServer {
           const result = await this.agentRuntime.executeTask(data.agentId, {
             id: Date.now().toString(),
             agentId: data.agentId,
-            userId: session.userId, // Use original session userId
+            userId: session.userId,
             description: data.description,
             status: 'pending',
             createdAt: new Date(),
-          }, session.sessionKey); // Continue existing session
+          }, session.sessionKey);
 
-          // Update session activity
           this.sessionManager.updateSessionActivity(session.sessionKey);
 
           socket.emit('task:result', {
@@ -205,38 +193,15 @@ export class GatewayServer {
             result,
           });
 
-          // Broadcast final status update to all clients
           this.io.emit('agent:status', {
             agentId: data.agentId,
-            status: this.agentRuntime.getAgent(data.agentId)?.status,
+            status: this.agentRuntime.getAgent(data.agentId)?.status || 'idle',
             sessionKey: session.sessionKey,
-          });
-
-          // Broadcast updated sessions list
-          this.io.emit('sessions:list', {
-            sessions: this.sessionManager.getAllSessions().map(s => ({
-              sessionKey: s.sessionKey,
-              channel: s.channel,
-              userId: s.userId,
-              agentId: s.agentId,
-              lastActivity: s.lastActivity,
-              messageCount: s.messageCount,
-            })),
           });
         } catch (error) {
           logger.error('Task execution failed:', error);
-          
-          // CRITICAL: Update status to error on frontend
-          this.io.emit('agent:status', {
-            agentId: data.agentId,
-            status: 'error',
-            sessionKey: data.sessionKey,
-          });
-
-          socket.emit('task:error', {
-            agentId: data.agentId,
-            error: error instanceof Error ? error.message : 'Task execution failed',
-          });
+          this.io.emit('agent:status', { agentId: data.agentId, status: 'error', sessionKey: data.sessionKey });
+          socket.emit('task:error', { agentId: data.agentId, error: error instanceof Error ? error.message : 'Task execution failed' });
         }
       });
 
@@ -247,28 +212,19 @@ export class GatewayServer {
   }
 
   async start(): Promise<void> {
-    // Initialize agent runtime
     await this.agentRuntime.initialize();
-
-    // Initialize Telegram bot with SessionManager
     this.telegramBot = new TelegramBotService(this.agentRuntime, this.sessionManager, this.io);
 
     return new Promise((resolve) => {
       this.httpServer.listen(this.config.port, () => {
         logger.info(`✅ Gateway server listening on port ${this.config.port}`);
-        logger.info(`WebSocket server ready`);
-        logger.info(`Loaded ${this.agentRuntime.getAllAgents().length} agents`);
         resolve();
       });
     });
   }
 
   async stop(): Promise<void> {
-    // Stop Telegram bot
-    if (this.telegramBot) {
-      this.telegramBot.stop();
-    }
-
+    if (this.telegramBot) this.telegramBot.stop();
     return new Promise((resolve) => {
       this.io.close(() => {
         this.httpServer.close(() => {
@@ -277,13 +233,5 @@ export class GatewayServer {
         });
       });
     });
-  }
-
-  getApp(): Express {
-    return this.app;
-  }
-
-  getIO(): SocketIOServer {
-    return this.io;
   }
 }

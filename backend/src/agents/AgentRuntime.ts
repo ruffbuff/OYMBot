@@ -1,24 +1,30 @@
 import { randomUUID } from 'crypto';
-import { AgentConfig, Task, Message } from '../types/agent';
-import { MemoryManager } from '../services/memory/MemoryManager';
-import { LLMManager } from '../services/llm/LLMManager';
-import { ToolManager } from '../services/tools/ToolManager';
-import { CommandManager } from '../services/commands/CommandManager';
-import { logger } from '../utils/logger';
+import { AgentConfig, Task, Message, AgentPlan, AgentStep } from '../types/agent.js';
+import { MemoryManager } from '../services/memory/MemoryManager.js';
+import { LLMManager } from '../services/llm/LLMManager.js';
+import { ToolManager } from '../services/tools/ToolManager.js';
+import { CommandManager } from '../services/commands/CommandManager.js';
+import { PlannerService } from '../services/planner/PlannerService.js';
+import { SessionManager } from '../services/session/SessionManager.js';
+import { logger } from '../utils/logger.js';
 
 export class AgentRuntime {
   private memoryManager: MemoryManager;
   private llmManager: LLMManager;
   private toolManager: ToolManager;
   private commandManager: CommandManager;
+  private plannerService: PlannerService;
+  private sessionManager: SessionManager;
   private agents: Map<string, AgentConfig> = new Map();
-  public onStep: ((data: { agentId: string; step: number; thought?: string; tool?: string; params?: any; result?: string }) => void) | null = null;
+  public onStep: ((data: { agentId: string; step: number; thought?: string; tool?: string; params?: any; result?: string; planProgress?: string }) => void) | null = null;
 
-  constructor(memoryManager: MemoryManager, llmManager: LLMManager) {
+  constructor(memoryManager: MemoryManager, llmManager: LLMManager, sessionManager: SessionManager) {
     this.memoryManager = memoryManager;
     this.llmManager = llmManager;
+    this.sessionManager = sessionManager;
     this.toolManager = new ToolManager(memoryManager);
     this.commandManager = new CommandManager();
+    this.plannerService = new PlannerService(llmManager);
   }
 
   async initialize(): Promise<void> {
@@ -29,7 +35,7 @@ export class AgentRuntime {
     }
     
     // Start watching for changes (Hot-reload)
-    this.memoryManager.watchAgents(async (agentId) => {
+    this.memoryManager.watchAgents(async (agentId: string) => {
       try {
         await this.reloadAgent(agentId);
       } catch (error) {
@@ -44,10 +50,7 @@ export class AgentRuntime {
     try {
       logger.info(`🔄 Reloading agent: ${agentId}...`);
       const updatedConfig = await this.memoryManager.loadAgent(agentId);
-      
-      // Keep internal runtime state if needed (status is currently in config)
       this.agents.set(agentId, updatedConfig);
-      
       logger.info(`✅ Agent ${agentId} reloaded successfully!`);
     } catch (error) {
       logger.error(`Failed to reload agent ${agentId}:`, error);
@@ -71,174 +74,313 @@ export class AgentRuntime {
           {
             agentId,
             userId: task.userId,
-            chatId: task.userId, // For now, userId = chatId
+            chatId: task.userId,
+            sessionKey: sessionKey || 'legacy',
             agent,
             memoryManager: this.memoryManager,
           }
         );
 
         if (commandResult) {
-          // Commands don't update context
           return commandResult;
         }
       }
 
-      // Update agent status
-      await this.updateAgentStatus(agentId, 'thinking');
-
-      // Load context (session-aware)
-      const memory = await this.memoryManager.loadMemory(agentId);
-      let context = await this.memoryManager.loadContext(agentId, sessionKey);
-
-      // Build initial system prompt
-      const systemPrompt = this.buildSystemPrompt(agent, memory);
+      // Check if this is a complex task that needs planning
+      const needsPlanning = this.plannerService.isComplexTask(task.description);
       
-      let loopCount = 0;
-      const MAX_LOOPS = 5;
-      let finalResponse = '';
-      let currentPrompt = `${context}\n\nUser: ${task.description}`;
-
-      while (loopCount < MAX_LOOPS) {
-        loopCount++;
-        logger.info(`Agent Loop #${loopCount} for task: ${task.description.slice(0, 50)}...`);
-
-        // Update status to working
-        await this.updateAgentStatus(agentId, 'working');
-
-        // Call LLM
-        const response = await this.llmManager.complete(
-          agent.llm.provider,
-          agent.llm.model,
-          currentPrompt,
-          {
-            systemPrompt,
-            temperature: agent.llm.temperature,
-            maxTokens: agent.llm.maxTokens,
-          }
-        );
-
-        const content = response.content;
-        logger.info(`LLM Response (loop ${loopCount}): ${content.slice(0, 200)}...`);
-
-        // Report thought/action if callback exists
-        if (this.onStep) {
-          this.onStep({
-            agentId,
-            step: loopCount,
-            thought: content.slice(0, 1000), // Full thought, truncated only for safety
-          });
-        }
-
-        // Extract tool call from anywhere in the response
-        const toolCall = this.extractToolCall(content);
-
-        if (toolCall) {
-          logger.info(`Tool call detected: ${toolCall.tool} with params:`, toolCall.params);
-          
-          // Report tool call
-          if (this.onStep) {
-            this.onStep({
-              agentId,
-              step: loopCount,
-              tool: toolCall.tool,
-              params: toolCall.params,
-            });
-          }
-          
-          // Check if tool is disabled
-          const disabledTools = agent.tools?.disabled || [];
-          if (disabledTools.includes(toolCall.tool)) {
-            const toolError = `I tried to use the ${toolCall.tool} tool, but it's currently disabled. Please enable it with /enable ${toolCall.tool} if you want me to use it.`;
-            currentPrompt += `\n\nAssistant: ${content}\n\nSystem: ${toolError}`;
-            continue;
-          }
-
-          try {
-            // Execute tool with agentId context
-            const toolResult = await this.toolManager.executeTool(
-              toolCall.tool,
-              toolCall.params || {},
-              agentId
-            );
-
-            logger.info(`Tool result for ${toolCall.tool} (first 200 chars): ${toolResult.slice(0, 200)}...`);
-
-            // Report tool result
-            if (this.onStep) {
-              this.onStep({
-                agentId,
-                step: loopCount,
-                tool: toolCall.tool,
-                result: toolResult.slice(0, 500), // Limit size for report
-              });
-            }
-
-            // Add result to prompt for next turn
-            currentPrompt += `\n\nAssistant: ${content}\n\nSystem (Tool Result from ${toolCall.tool}):\n${toolResult}\n\nContinue with your task or provide a final response if you are finished.`;
-          } catch (error: any) {
-            logger.error(`Tool execution failed (${toolCall.tool}):`, error);
-            const toolError = `Error executing tool ${toolCall.tool}: ${error.message || error}`;
-            currentPrompt += `\n\nAssistant: ${content}\n\nSystem: ${toolError}`;
-          }
-        } else {
-          // No tool call - this is the final response
-          finalResponse = content;
-          break;
-        }
+      if (needsPlanning && sessionKey) {
+        logger.info(`🏗️ Complex task detected, using planner mode`);
+        return await this.executeWithPlanner(agentId, task, sessionKey);
+      } else {
+        logger.info(`💬 Simple task, using reactive mode`);
+        return await this.executeReactive(agentId, task, sessionKey);
       }
-
-      if (!finalResponse) {
-        finalResponse = "I've reached my maximum number of steps for this task. Please let me know if you'd like me to continue or if you have any questions about what I've done so far.";
-      }
-
-      // Save user message to transcript (JSONL) - session-aware
-      await this.memoryManager.saveMessageToTranscript(agentId, 'user', task.description, sessionKey);
-      
-      // Save assistant response to transcript (JSONL) - session-aware
-      await this.memoryManager.saveMessageToTranscript(agentId, 'assistant', finalResponse, sessionKey);
-
-      // Update context with new message (Markdown) - session-aware
-      const updatedContext = `${context}\n\nUser: ${task.description}\nAssistant: ${finalResponse}\n`;
-      await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
-
-      // Update status back to idle
-      await this.updateAgentStatus(agentId, 'idle');
-
-      logger.info(`Task completed for agent ${agentId}, session: ${sessionKey || 'legacy'}`);
-
-      return finalResponse;
     } catch (error) {
-      logger.error(`Task execution failed for agent ${agentId}:`, error);
+      logger.error(`Task failed for ${agentId}:`, error);
       await this.updateAgentStatus(agentId, 'error');
       throw error;
     }
   }
 
   /**
-   * Extracts a JSON tool call from a text string.
-   * Looks for the first occurrence of a JSON object containing a "tool" property.
+   * Execute task with planner (Architect + Engineer mode)
    */
-  private extractToolCall(text: string): { tool: string; params?: any } | null {
-    try {
-      // 1. Try exact match if response is only JSON
-      if (text.trim().startsWith('{') && text.trim().endsWith('}')) {
-        const parsed = JSON.parse(text.trim());
-        if (parsed.tool) return parsed;
+  private async executeWithPlanner(agentId: string, task: Task, sessionKey: string): Promise<string> {
+    const agent = this.agents.get(agentId)!;
+    
+    // Update status
+    await this.updateAgentStatus(agentId, 'thinking');
+
+    // Phase 1: PLANNING (Architect)
+    logger.info(`📋 Phase 1: Creating execution plan...`);
+    const plan = await this.plannerService.createPlan(agent, task.description);
+    
+    // Save plan to session
+    this.sessionManager.setSessionPlan(sessionKey, plan);
+
+    // Notify UI
+    if (this.onStep) {
+      this.onStep({
+        agentId,
+        step: 0,
+        thought: `Created plan with ${plan.steps.length} steps`,
+        planProgress: `0/${plan.steps.length}`,
+      });
+    }
+
+    // Phase 2: EXECUTION (Engineer)
+    logger.info(`🔧 Phase 2: Executing plan (${plan.steps.length} steps)...`);
+    await this.updateAgentStatus(agentId, 'working');
+
+    const executionLog: string[] = [];
+    let needsRefactor = false;
+
+    for (let i = 0; i < plan.steps.length; i++) {
+      const step = plan.steps[i];
+      plan.currentStepIndex = i;
+      
+      logger.info(`[Step ${i + 1}/${plan.steps.length}] ${step.description}`);
+      
+      // Update step status
+      step.status = 'in_progress';
+      this.sessionManager.setSessionPlan(sessionKey, plan);
+
+      // Notify UI
+      if (this.onStep) {
+        this.onStep({
+          agentId,
+          step: i + 1,
+          thought: step.description,
+          tool: step.action,
+          params: step.params,
+          planProgress: `${i + 1}/${plan.steps.length}`,
+        });
       }
 
-      // 2. Search for JSON block within text using regex
-      const jsonRegex = /\{[\s\S]*?"tool"[\s\S]*?\}/g;
+      try {
+        // Execute the step
+        const result = await this.toolManager.executeTool(
+          step.action,
+          step.params,
+          agentId
+        );
+
+        step.result = result;
+        step.status = 'completed';
+        executionLog.push(`✅ Step ${i + 1}: ${step.description}\nResult: ${result.slice(0, 200)}`);
+
+        logger.info(`✅ Step ${i + 1} completed`);
+
+        // Notify UI
+        if (this.onStep) {
+          this.onStep({
+            agentId,
+            step: i + 1,
+            tool: step.action,
+            result: result.slice(0, 500),
+            planProgress: `${i + 1}/${plan.steps.length}`,
+          });
+        }
+
+        // Check if we need to refactor plan based on result
+        if (result.toLowerCase().includes('error') || result.toLowerCase().includes('failed')) {
+          logger.warn(`⚠️ Step ${i + 1} had issues, may need plan refactoring`);
+          needsRefactor = true;
+        }
+
+      } catch (error: any) {
+        step.error = error.message;
+        step.status = 'failed';
+        executionLog.push(`❌ Step ${i + 1}: ${step.description}\nError: ${error.message}`);
+        
+        logger.error(`❌ Step ${i + 1} failed:`, error);
+        
+        // Try to refactor plan
+        needsRefactor = true;
+        break;
+      }
+
+      // Save updated plan
+      this.sessionManager.setSessionPlan(sessionKey, plan);
+    }
+
+    // Phase 3: COMPLETION or REFACTORING
+    let finalResponse: string;
+
+    if (needsRefactor && plan.currentStepIndex < plan.steps.length - 1) {
+      logger.info(`🔄 Plan needs refactoring, consulting architect...`);
+      
+      const executionContext = executionLog.join('\n\n');
+      const refactoredPlan = await this.plannerService.refactorPlan(agent, plan, executionContext);
+      
+      this.sessionManager.setSessionPlan(sessionKey, refactoredPlan);
+      
+      finalResponse = `I've completed ${plan.currentStepIndex + 1} steps, but encountered issues. I've created a new plan to continue. Would you like me to proceed?`;
+    } else {
+      // All steps completed
+      plan.status = 'completed';
+      plan.completedAt = new Date();
+      this.sessionManager.clearSessionPlan(sessionKey);
+      
+      const successCount = plan.steps.filter(s => s.status === 'completed').length;
+      finalResponse = `✅ Task completed! Executed ${successCount}/${plan.steps.length} steps successfully.\n\nSummary:\n${executionLog.slice(-3).join('\n\n')}`;
+    }
+
+    // Save to transcript
+    await this.memoryManager.saveMessageToTranscript(agentId, 'user', task.description, sessionKey);
+    await this.memoryManager.saveMessageToTranscript(agentId, 'assistant', finalResponse, sessionKey);
+
+    // Update context
+    const context = await this.memoryManager.loadContext(agentId, sessionKey);
+    const updatedContext = `${context}\n\nUser: ${task.description}\nAssistant: ${finalResponse}\n`;
+    await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
+
+    // Reset status
+    await this.updateAgentStatus(agentId, 'idle');
+
+    return finalResponse;
+  }
+
+  /**
+   * Execute task reactively (original loop-based approach)
+   */
+  private async executeReactive(agentId: string, task: Task, sessionKey?: string): Promise<string> {
+    const agent = this.agents.get(agentId)!;
+    
+    // Update agent status
+    await this.updateAgentStatus(agentId, 'thinking');
+
+    // Load context
+    const memory = await this.memoryManager.loadMemory(agentId);
+    let context = await this.memoryManager.loadContext(agentId, sessionKey);
+
+    // Build initial system prompt
+    const systemPrompt = await this.buildSystemPrompt(agent, memory, agentId);
+    
+    let loopCount = 0;
+    const MAX_LOOPS = 5;
+    let finalResponse = '';
+    let currentPrompt = `${context}\n\nUser: ${task.description}`;
+
+    while (loopCount < MAX_LOOPS) {
+      loopCount++;
+      logger.info(`[Loop #${loopCount}] Agent ${agentId} starting turn...`);
+
+      // Update status to working
+      await this.updateAgentStatus(agentId, 'working');
+
+      // Call LLM
+      const response = await this.llmManager.complete(
+        agent.llm.provider,
+        agent.llm.model,
+        currentPrompt,
+        {
+          systemPrompt,
+          temperature: agent.llm.temperature,
+          maxTokens: agent.llm.maxTokens,
+        }
+      );
+
+      const content = response.content;
+      const toolCall = this.extractToolCall(content);
+
+      // Report to listeners (TUI/Web)
+      if (this.onStep) {
+        this.onStep({
+          agentId,
+          step: loopCount,
+          thought: content,
+          tool: toolCall?.tool,
+          params: toolCall?.params,
+        });
+      }
+
+      if (toolCall) {
+        logger.info(`[Step ${loopCount}] Tool: ${toolCall.tool}`);
+        
+        try {
+          // Execute tool
+          const toolResult = await this.toolManager.executeTool(
+            toolCall.tool,
+            toolCall.params || {},
+            agentId
+          );
+
+          logger.info(`[Step ${loopCount}] Result length: ${toolResult.length}`);
+
+          // Report result
+          if (this.onStep) {
+            this.onStep({
+              agentId,
+              step: loopCount,
+              tool: toolCall.tool,
+              result: toolResult,
+            });
+          }
+
+          // Feed result back to the model
+          currentPrompt += `\n\nAssistant: ${content}\n\nSystem (Tool Result from ${toolCall.tool}):\n${toolResult}\n\n[Status: Loop ${loopCount}/${MAX_LOOPS}]. Continue your task.`;
+        } catch (error: any) {
+          logger.error(`[Step ${loopCount}] Tool Error:`, error);
+          const toolError = `Error executing tool ${toolCall.tool}: ${error.message || error}`;
+          currentPrompt += `\n\nAssistant: ${content}\n\nSystem: ${toolError}`;
+        }
+      } else {
+        // No more tools, this is the end
+        logger.info(`[Step ${loopCount}] No tool call found. Finalizing.`);
+        finalResponse = content;
+        break;
+      }
+    }
+
+    if (!finalResponse) {
+      finalResponse = "I've reached my maximum number of steps for this task. I've done my best, but maybe we should break the task down into smaller parts.";
+    }
+
+    // Save to transcript
+    await this.memoryManager.saveMessageToTranscript(agentId, 'user', task.description, sessionKey);
+    await this.memoryManager.saveMessageToTranscript(agentId, 'assistant', finalResponse, sessionKey);
+
+    // Update context
+    const updatedContext = `${context}\n\nUser: ${task.description}\nAssistant: ${finalResponse}\n`;
+    await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
+
+    // Reset status
+    await this.updateAgentStatus(agentId, 'idle');
+
+    return finalResponse;
+  }
+
+  private extractToolCall(text: string): { tool: string; params?: any } | null {
+    try {
+      let cleanText = text.trim();
+      
+      // Handle markdown code blocks
+      if (cleanText.includes('```')) {
+        const matches = cleanText.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (matches) {
+          cleanText = matches[1].trim();
+        }
+      }
+
+      // 1. Direct JSON parse
+      try {
+        const parsed = JSON.parse(cleanText);
+        if (parsed.tool) return parsed;
+      } catch (e) {}
+
+      // 2. Regex for JSON inside text
+      const jsonRegex = /\{[\s\S]*?"tool"\s*:\s*"[^"]+"[\s\S]*?\}/g;
       const matches = text.match(jsonRegex);
 
       if (matches) {
         for (const match of matches) {
           try {
-            const parsed = JSON.parse(match);
+            const jsonStr = match.replace(/,\s*\}/g, '}').replace(/,\s*\]/g, ']');
+            const parsed = JSON.parse(jsonStr);
             if (parsed.tool) return parsed;
-          } catch (e) {
-            // Skip invalid JSON and try next match
-            continue;
-          }
+          } catch (e) {}
         }
       }
     } catch (error) {
@@ -247,119 +389,73 @@ export class AgentRuntime {
     return null;
   }
 
-  async processMessage(agentId: string, message: Message, sessionKey?: string): Promise<string> {
-    const task: Task = {
-      id: randomUUID(),
-      agentId,
-      userId: message.userId,
-      description: message.content,
-      status: 'pending',
-      createdAt: new Date(),
-    };
-
-    return this.executeTask(agentId, task, sessionKey);
-  }
-
-  private buildSystemPrompt(agent: AgentConfig, memory: string): string {
-    let prompt = `You are ${agent.name}, an AI software engineer and autonomous agent. You are running in a local terminal environment on macOS.`;
+  private async buildSystemPrompt(agent: AgentConfig, memory: string, agentId: string): Promise<string> {
+    const toolsList = this.toolManager.getEnabledTools(agent.tools?.disabled || []);
     
-    // Core Engineering Mandates
-    prompt += `\n\n# Your Mission (Agentic AI Mode)
+    // Load SOUL.md for personality
+    let soul = '';
+    try {
+      soul = await this.memoryManager.loadSoul(agentId);
+    } catch (error) {
+      // SOUL.md is optional
+    }
+    
+    // Workspace is the agent's home directory
+    const workspace = process.env.AGENT_WORKSPACE || process.cwd();
+    
+    let prompt = `You are ${agent.name}, an AI agent with full file system access.
 
-1. **ACTION OVER WORDS**: If the user asks you to create, modify, or run something, you MUST use a tool immediately. Do not just say "I'll do it". EXECUTE IT in the same message.
-2. **One tool at a time**: You can use ONLY ONE tool per message. 
-3. **Desktop Path**: On this Mac, the Desktop is located at: /Users/user/Desktop. If the user asks for the Desktop, use this path.
-4. **Be Precise**: When fixing bugs, always verify your changes using 'shell_exec'.
-5. **Autonomy**: You are allowed to perform multiple steps to complete a task. Don't ask for permission for every small step; just execute your plan.
+${soul ? `# Your Personality\n${soul}\n` : ''}
+
+# Workspace & File System
+- Your workspace (home): ${workspace}
+- Relative paths are resolved from workspace: "./file.txt" → "${workspace}/file.txt"
+- Absolute paths work anywhere: "/Users/user/Desktop/file.txt"
+- You can access ANY directory on the system with absolute paths
+
+# Path Examples
+Relative (from workspace):
+- "./my-project/index.html" → creates in workspace
+- "test.txt" → creates in workspace
+
+Absolute (anywhere on system):
+- "/Users/user/Desktop/test.txt" → creates on Desktop
+- "/tmp/cache.json" → creates in /tmp
+- "~/Documents/notes.md" → creates in user's Documents
+
+# Core Instructions
+1. When user asks about you or your capabilities - answer based on the context provided
+2. For simple questions and greetings - respond naturally without tools
+3. For tasks requiring actions - use tools in JSON format: {"tool": "name", "params": {...}}
+4. Always explain what you're doing
+5. Ask user for clarification if path is ambiguous
+
+# Available Tools (${toolsList.length} total)
+${toolsList.map(t => `- ${t.name}: ${t.description}`).join('\n')}
 
 # Tool Usage Format
-You MUST respond with a JSON object to use a tool. You can add reasoning before the JSON.
-Example:
-"I will create the script now.
-{\\"tool\\": \\"write_file\\", \\"params\\": {\\"path\\": \\"/Users/user/Desktop/test.py\\", \\"content\\": \\"print('hello')\\"}}"`;
+{"tool": "tool_name", "params": {"key": "value"}}
 
-    // Add model info
-    prompt += `\n\n# Your AI Model Configuration
+Examples:
+- {"tool": "read_file", "params": {"path": "/Users/user/Desktop/README.md"}}
+- {"tool": "shell_exec", "params": {"command": "ls -la /Users/user/Desktop"}}
+- {"tool": "write_file", "params": {"path": "./test.txt", "content": "Hello"}}
+- {"tool": "shell_exec", "params": {"command": "mkdir ~/Documents/my-project"}}
 
-You are currently running on:
-- Provider: ${agent.llm.provider}
-- Model: ${agent.llm.model}
-- Temperature: ${agent.llm.temperature}
-- Max Tokens: ${agent.llm.maxTokens}
+${memory ? `# Long-term Memory\n${memory.slice(0, 500)}` : ''}
 
-# How to Answer Questions About Your Model
-
-CRITICAL INSTRUCTION: When users ask about your AI model, you MUST respond with your actual provider and model from the configuration above.
-
-Examples of CORRECT responses:
-- User: "what ai model are you using?"
-  You: "I'm using ${agent.llm.provider}/${agent.llm.model}"
-
-- User: "which model are you?"
-  You: "I'm running on ${agent.llm.model} via ${agent.llm.provider}"
-
-- User: "what's your model?"
-  You: "My current model is ${agent.llm.provider}/${agent.llm.model}"
-
-NEVER mention "OpenClaw" when asked about your model. OpenClaw is the platform/gateway that connects you to users, NOT your AI model.`;
-
-    if (agent.personality) {
-      prompt += `\n\n# Your Personality\n${agent.personality}`;
-    }
-
-    if (memory) {
-      prompt += `\n\n# Long-term Memory\n${memory.slice(0, 1000)}`; // Limit memory size
-    }
-
-    if (agent.skills.length > 0) {
-      prompt += `\n\n# Your Skills\n${agent.skills.join(', ')}`;
-    }
-
-    // Add tools description (only enabled tools)
-    const disabledTools = agent.tools?.disabled || [];
-    const toolsDesc = this.toolManager.getToolsDescription(disabledTools);
-    
-    if (toolsDesc !== 'No tools available') {
-      prompt += `\n\n# Available Tools\n${toolsDesc}`;
-      prompt += `\n\n# How to Use Tools
-
-1. **Reasoning first**: Always think and explain your plan to the user BEFORE using a tool.
-2. **One tool at a time**: You can use ONLY ONE tool per message. After you use a tool, the system will provide you with the result.
-3. **JSON Format**: When you need to call a tool, include a JSON object in your response. You can surround it with other text if you want, but the JSON itself must follow this format:
-{"tool": "tool_name", "params": {"param1": "value1"}}
-
-4. **Available Tools for Tasks**:
-   - \`shell_exec\`: Use this to run terminal commands (npm, git, ls, etc.).
-   - \`list_directory\`: Use this to see files in a directory.
-   - \`read_file\`: Use this to examine code or documentation.
-   - \`write_file\`: Use this to save your work or updates.
-
-# Multi-step Workflow
-You can perform multi-step tasks by calling tools one by one. For example:
-- Task: "Run tests and fix if broken"
-- Step 1: You call {"tool": "shell_exec", "params": {"command": "npm test"}}
-- Step 2: System gives result. You see an error in "App.tsx".
-- Step 3: You call {"tool": "read_file", "params": {"path": "src/App.tsx"}}
-- Step 4: System gives content. You find the bug.
-- Step 5: You call {"tool": "write_file", "params": {"path": "src/App.tsx", "content": "..."}}
-- Step 6: You call {"tool": "shell_exec", "params": {"command": "npm test"}} again.
-- Step 7: Tests pass. You provide the final result to the user.
-
-Do NOT provide a final response until the task is complete. Always state when you are finished.`;
-    }
+Remember: You have full file system access. Use absolute paths when user specifies location, relative paths for workspace operations.`;
 
     return prompt;
   }
 
-  private async updateAgentStatus(
-    agentId: string,
-    status: AgentConfig['status']
-  ): Promise<void> {
+  private async updateAgentStatus(agentId: string, status: AgentConfig['status']): Promise<void> {
     const agent = this.agents.get(agentId);
     if (agent) {
       agent.status = status;
       this.agents.set(agentId, agent);
-      await this.memoryManager.updateAgentStatus(agentId, status);
+      // Don't write status to disk - it causes hot-reload loops
+      // await this.memoryManager.updateAgentStatus(agentId, status);
     }
   }
 

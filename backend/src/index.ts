@@ -1,7 +1,6 @@
 import dotenv from 'dotenv';
-import path from 'path';
-import { GatewayServer } from './gateway/server';
-import { logger } from './utils/logger';
+import { GatewayServer } from './gateway/server.js';
+import { logger } from './utils/logger.js';
 
 // Load environment variables from backend directory
 dotenv.config();
@@ -17,7 +16,7 @@ async function main() {
 
     await server.start();
 
-    logger.info(`AI Office Backend started on port ${port}`);
+    logger.info(`✅ AI Office Backend started on port ${port}`);
 
     // Graceful shutdown
     process.on('SIGTERM', async () => {

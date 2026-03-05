@@ -1,23 +1,28 @@
 # 🎯 TODO: Project Roadmap
 
-This file tracks the major milestones for turning this project into a robust, secure, and user-friendly platform for AI agents.
-
 ## 🏛️ Core Architecture
-- [ ] **Memory Architecture**: Finalize the long-term memory system. Implement vector-based search (like in ZeroClaw) for more efficient context retrieval.
-- [ ] **Config Logic**: Improve the agent configuration (`AGENT.md`) to be more modular and secure, separating secrets from public settings.
-- [ ] **Context Control**: Implement a token-aware context manager that truncates conversations based on the selected model's context window size (e.g., 4k, 8k, 128k).
+- [x] **Basic Gateway & Runtime**
+- [ ] **Memory Architecture**: Finalize the long-term memory system. Implement vector-based search (like in ZeroClaw).
+- [ ] **Config Logic**: Improve the agent configuration (`AGENT.md`).
+- [x] **Context Control**: Basic session-aware context implemented.
+- [ ] **Advanced Context Control**: Implement token-aware manager for different model windows.
 
 ## 🖥️ CLI / TUI
-- [ ] **Ink TUI**: Replace the simple `chat.ts` with a full-featured Terminal User Interface (TUI) using Ink and React. It should display agent status, logs, and verbose steps in real-time.
-- [ ] **Advanced Onboarding**: Enhance the `onboard` process within the new TUI to allow easy switching between models and providers without manual file edits.
+- [x] **Basic Blessed TUI**: Implemented with chat and thoughts panels.
+- [ ] **Advanced TUI**: Add real-time resource monitoring (RAM/CPU) and model selection.
+- [ ] **CLI Onboarding**: Improve the onboarding UX.
 
-## 📦 Installation & Distribution
-- [ ] **Installers**: Create native installers for macOS and Windows to simplify the setup process for non-technical users.
+## 🧩 Extensibility
+- [x] **Basic Tool System**: File access, shell exec, web search.
+- [ ] **Firecrawl Integration**: For better web scraping.
+- [ ] **App Integrations**: Notion, Obsidian.
 
-## 🧩 Extensibility (Skills & Integrations)
-- [ ] **Skill System**: Develop a formal "skill" system where new toolsets can be added to agents as plugins, similar to IronClaw's WASM or OpenClaw's extensions.
-- [ ] **Firecrawl Integration**: Add Firecrawl as a powerful tool for web scraping and internet research.
-- [ ] **App Integrations**: Add skills for interacting with popular applications like Notion and Obsidian.
+## 🔐 Security
+- [ ] **Telegram Whitelist**: Restrict access by User ID.
+- [ ] **Sandboxed Exec**: More secure way to run shell commands.
 
-## 🔐 Security & Access Control
-- [ ] **Telegram User Whitelist**: Add an option in `AGENT.md` to specify a list of allowed Telegram user IDs, restricting bot access to only authorized users.
+## 🛠️ Current Bugfix Tasks
+- [x] **Fix CLI Session Creation**: Ensure CLI sessions are registered in Gateway.
+- [x] **Robust Tool Parsing**: Fix agent sending raw JSON to chat.
+- [x] **Frontend Session Selection**: Allow Web UI to pick existing sessions.
+- [x] **Unified CLI**: Move to a single `npm run chat` command.

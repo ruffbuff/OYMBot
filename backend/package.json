@@ -1,12 +1,13 @@
 {
   "name": "oym-bot-backend",
-  "version": "0.1.5",
+  "version": "0.1.6",
+  "type": "module",
   "description": "Backend server for AI Office Platform",
   "main": "dist/index.js",
   "scripts": {
     "onboard": "tsx src/cli/onboard.ts",
     "gateway": "tsx src/index.ts",
-    "chat": "tsx src/cli/chat.ts",
+    "chat": "tsx src/cli/ChatBlessed.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start:prod": "node dist/index.js",
@@ -33,7 +34,8 @@
     "compression": "^1.7.4",
     "winston": "^3.11.0",
     "inquirer": "^9.2.12",
-    "chalk": "^5.3.0"
+    "chalk": "^5.3.0",
+    "blessed": "^0.1.81"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
@@ -43,6 +45,7 @@
     "@types/compression": "^1.7.5",
     "@types/uuid": "^9.0.7",
     "@types/inquirer": "^9.0.7",
+    "@types/blessed": "^0.1.25",
     "@typescript-eslint/eslint-plugin": "^6.19.1",
     "@typescript-eslint/parser": "^6.19.1",
     "eslint": "^8.56.0",
