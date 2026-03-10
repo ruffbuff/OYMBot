@@ -65,6 +65,12 @@ export class AgentRuntime {
     }
 
     try {
+      // Auto-log user request to daily log
+      await this.memoryManager.addDailyLog(
+        agentId, 
+        `User request: ${task.description.slice(0, 200)}`
+      );
+
       // Check if message is a command
       if (this.commandManager.isCommand(task.description)) {
         logger.info(`Processing command: ${task.description} for session: ${sessionKey || 'legacy'}`);
@@ -89,16 +95,32 @@ export class AgentRuntime {
       // Check if this is a complex task that needs planning
       const needsPlanning = this.plannerService.isComplexTask(task.description);
       
+      let result: string;
       if (needsPlanning && sessionKey) {
         logger.info(`🏗️ Complex task detected, using planner mode`);
-        return await this.executeWithPlanner(agentId, task, sessionKey);
+        result = await this.executeWithPlanner(agentId, task, sessionKey);
       } else {
         logger.info(`💬 Simple task, using reactive mode`);
-        return await this.executeReactive(agentId, task, sessionKey);
+        result = await this.executeReactive(agentId, task, sessionKey);
       }
+
+      // Auto-log completion to daily log
+      await this.memoryManager.addDailyLog(
+        agentId,
+        `Completed task: ${task.description.slice(0, 100)} - Mode: ${needsPlanning ? 'Planner' : 'Reactive'}`
+      );
+
+      return result;
     } catch (error) {
       logger.error(`Task failed for ${agentId}:`, error);
       await this.updateAgentStatus(agentId, 'error');
+      
+      // Log error to daily log
+      await this.memoryManager.addDailyLog(
+        agentId,
+        `ERROR: Task failed - ${task.description.slice(0, 100)}`
+      );
+      
       throw error;
     }
   }
@@ -255,13 +277,73 @@ export class AgentRuntime {
     const memory = await this.memoryManager.loadMemory(agentId);
     let context = await this.memoryManager.loadContext(agentId, sessionKey);
 
-    // Build initial system prompt
+    // AUTO-SEARCH MEMORY for certain types of questions
+    let memorySearchResults = '';
+    const userMessage = task.description.toLowerCase();
+    
+    // Check if user is asking about past interactions, preferences, or facts
+    const shouldSearchMemory = 
+      userMessage.includes('помнишь') || userMessage.includes('remember') ||
+      userMessage.includes('раньше') || userMessage.includes('before') ||
+      userMessage.includes('предпочитаю') || userMessage.includes('prefer') ||
+      userMessage.includes('говорил') || userMessage.includes('told') ||
+      userMessage.includes('обсуждали') || userMessage.includes('discussed') ||
+      userMessage.includes('знаешь') || userMessage.includes('know') ||
+      userMessage.includes('что я') || userMessage.includes('about me') ||
+      userMessage.includes('мой') || userMessage.includes('my ') ||
+      userMessage.includes('где') || userMessage.includes('where') ||
+      userMessage.includes('как') || userMessage.includes('how') ||
+      userMessage.includes('когда') || userMessage.includes('when') ||
+      userMessage.includes('сказал') || userMessage.includes('said') ||
+      userMessage.includes('спрашивал') || userMessage.includes('asked') ||
+      userMessage.includes('делали') || userMessage.includes('did') ||
+      userMessage.includes('работали') || userMessage.includes('worked') ||
+      userMessage.includes('проект') || userMessage.includes('project') ||
+      userMessage.includes('файл') || userMessage.includes('file') ||
+      userMessage.includes('папка') || userMessage.includes('folder') ||
+      userMessage.includes('ранее') || userMessage.includes('earlier') ||
+      userMessage.includes('сегодня') || userMessage.includes('today') ||
+      userMessage.includes('вчера') || userMessage.includes('yesterday');
+
+    if (shouldSearchMemory) {
+      try {
+        // Extract key words for search (remove question words, keep important terms)
+        const searchQuery = task.description
+          .replace(/[?!.,]/g, '')
+          .replace(/\b(ты|помнишь|знаешь|где|как|когда|что|do|you|remember|know|where|how|when|what)\b/gi, '')
+          .trim()
+          .split(' ')
+          .filter(word => word.length > 2)
+          .slice(0, 3)
+          .join(' ');
+        
+        // Search in memory
+        const memoryResults = await this.memoryManager.searchMemory(agentId, searchQuery);
+        
+        // Search in sessions
+        const sessionResults = await this.memoryManager.searchSessions(agentId, searchQuery);
+        
+        if (memoryResults && !memoryResults.includes('No results found')) {
+          memorySearchResults += `\n# FOUND IN MEMORY:\n${memoryResults}\n`;
+        }
+        
+        if (sessionResults && !sessionResults.includes('No results found')) {
+          memorySearchResults += `\n# FOUND IN PAST CONVERSATIONS:\n${sessionResults}\n`;
+        }
+        
+        logger.info(`Auto-searched memory for query: "${searchQuery}"`);
+      } catch (error) {
+        logger.error('Auto memory search failed:', error);
+      }
+    }
+
+    // Build initial system prompt with memory search results
     const systemPrompt = await this.buildSystemPrompt(agent, memory, agentId);
     
     let loopCount = 0;
     const MAX_LOOPS = 5;
     let finalResponse = '';
-    let currentPrompt = `${context}\n\nUser: ${task.description}`;
+    let currentPrompt = `${context}${memorySearchResults}\n\nUser: ${task.description}`;
 
     while (loopCount < MAX_LOOPS) {
       loopCount++;
@@ -400,6 +482,12 @@ export class AgentRuntime {
       // SOUL.md is optional
     }
     
+    // Load recent activity
+    let recentActivity = '';
+    try {
+      recentActivity = await this.memoryManager.getRecentMemory(agentId, 3);
+    } catch (error) {}
+    
     // Workspace is the agent's home directory
     const workspace = process.env.AGENT_WORKSPACE || process.cwd();
     
@@ -425,10 +513,44 @@ Absolute (anywhere on system):
 
 # Core Instructions
 1. When user asks about you or your capabilities - answer based on the context provided
-2. For simple questions and greetings - respond naturally without tools
-3. For tasks requiring actions - use tools in JSON format: {"tool": "name", "params": {...}}
-4. Always explain what you're doing
-5. Ask user for clarification if path is ambiguous
+2. For simple greetings - respond naturally without tools
+3. For ANY questions about past interactions, preferences, or facts - YOU MUST use search tools FIRST, then answer
+4. For tasks requiring actions - use tools in JSON format: {"tool": "name", "params": {...}}
+5. Always explain what you're doing
+6. Ask user for clarification if path is ambiguous
+
+# Memory System - IMPORTANT!
+You have a two-layer memory system:
+
+**Long-term Memory (MEMORY.md)**: For facts that matter weeks/months later
+- User preferences and personal information
+- Important project decisions and architecture choices
+- Recurring tasks and workflows
+- Key contacts and relationships
+- Use tool: remember_fact
+
+**Daily Logs (memory/YYYY-MM-DD.md)**: For today's context
+- What user asked today
+- Actions you performed
+- Decisions made during tasks
+- Temporary context and notes
+- Use tool: log_daily
+
+**CRITICAL MEMORY RULES - MANDATORY:**
+1. If user asks about past conversations, preferences, or facts - IMMEDIATELY use search_memory or search_sessions
+2. NEVER say "I need to check" or "let me look" - JUST DO IT with tools
+3. When user shares important preferences/facts, IMMEDIATELY use remember_fact
+4. ALWAYS log important actions to daily log using log_daily tool
+5. At the end of complex tasks, log a summary to daily log
+
+**EXAMPLES OF WHEN TO SEARCH AUTOMATICALLY:**
+- "Do you remember what we discussed?"
+- "What did I tell you earlier?"
+- "What are my preferences?"
+- "Where is my project?"
+- "What did we work on?"
+
+**NEVER answer these questions without searching first!**
 
 # Available Tools (${toolsList.length} total)
 ${toolsList.map(t => `- ${t.name}: ${t.description}`).join('\n')}
@@ -439,10 +561,13 @@ ${toolsList.map(t => `- ${t.name}: ${t.description}`).join('\n')}
 Examples:
 - {"tool": "read_file", "params": {"path": "/Users/user/Desktop/README.md"}}
 - {"tool": "shell_exec", "params": {"command": "ls -la /Users/user/Desktop"}}
-- {"tool": "write_file", "params": {"path": "./test.txt", "content": "Hello"}}
-- {"tool": "shell_exec", "params": {"command": "mkdir ~/Documents/my-project"}}
+- {"tool": "log_daily", "params": {"entry": "User asked to create a new React project"}}
+- {"tool": "remember_fact", "params": {"fact": "User prefers TypeScript over JavaScript"}}
+- {"tool": "search_memory", "params": {"query": "React project"}}
 
-${memory ? `# Long-term Memory\n${memory.slice(0, 500)}` : ''}
+${memory ? `# Long-term Memory (MEMORY.md)\n${memory.slice(0, 800)}\n` : ''}
+
+${recentActivity ? `# Recent Activity (Last 3 Days)\n${recentActivity.slice(0, 1000)}\n` : ''}
 
 Remember: You have full file system access. Use absolute paths when user specifies location, relative paths for workspace operations.`;
 

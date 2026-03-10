@@ -59,7 +59,7 @@ class BlessedTUI {
       left: 0,
       width: '100%',
       height: '100%-8',
-      label: ' {bold}CONVERSATION & THOUGHTS{/bold} ',
+      label: ' {bold}CONVERSATION{/bold} ',
       border: { type: 'line' },
       tags: true,
       scrollable: true,
@@ -68,8 +68,10 @@ class BlessedTUI {
       keys: true,
       vi: true,
       padding: {
-        left: 2,
-        right: 2, // Space for scrollbar
+        left: 1,
+        right: 3, // Space for scrollbar
+        top: 0,
+        bottom: 0,
       },
       scrollbar: {
         ch: ' ',
@@ -153,7 +155,7 @@ class BlessedTUI {
         return;
       }
 
-      this.logMessage(`{blue-fg}{bold}You:{/bold}{/blue-fg} ${text}`);
+      this.logMessage(`{blue-fg}{bold}You:{/bold}{/blue-fg} ${this.wrapText(text, this.screen.width - 8)}`);
       this.socket.emit('task:create', {
         agentId: this.currentAgent.id,
         description: text,
@@ -162,6 +164,34 @@ class BlessedTUI {
     } else {
       this.logMessage('{red-fg}Error:{/red-fg} Not connected or no agent selected.');
     }
+  }
+
+  private wrapText(text: string, maxWidth: number): string {
+    if (text.length <= maxWidth) return text;
+    
+    const words = text.split(' ');
+    let result = '';
+    let currentLine = '';
+    
+    for (const word of words) {
+      if ((currentLine + ' ' + word).length > maxWidth) {
+        if (currentLine) {
+          result += (result ? '\n  ' : '') + currentLine;
+          currentLine = word;
+        } else {
+          // Word is too long, truncate it
+          result += (result ? '\n  ' : '') + word.slice(0, maxWidth - 3) + '...';
+          currentLine = '';
+        }
+      } else {
+        currentLine = currentLine ? currentLine + ' ' + word : word;
+      }
+    }
+    if (currentLine) {
+      result += (result ? '\n  ' : '') + currentLine;
+    }
+    
+    return result;
   }
 
   private logMessage(msg: string) {
@@ -218,20 +248,67 @@ class BlessedTUI {
       if (this.currentAgent && data.agentId === this.currentAgent.id) {
         if (data.tool) {
           this.logMessage(`  {yellow-fg}⚙️ Step ${data.step}: Using tool "${data.tool}"{/yellow-fg}`);
-          if (data.params) this.logMessage(`    {gray-fg}Params: ${JSON.stringify(data.params)}{/gray-fg}`);
-        } else if (data.thought) {
-          // Display only the first 100 chars of thought to keep it clean, or full if user wants verbose
-          this.logMessage(`  {gray-fg}🧠 Thought: ${data.thought.slice(0, 150).replace(/\n/g, ' ')}...{/gray-fg}`);
+          if (data.params) {
+            const paramsStr = JSON.stringify(data.params);
+            const maxWidth = this.screen.width - 8; // Account for borders and padding
+            const truncatedParams = paramsStr.length > maxWidth ? 
+              paramsStr.slice(0, maxWidth - 3) + '...' : paramsStr;
+            this.logMessage(`    {gray-fg}Params: ${truncatedParams}{/gray-fg}`);
+          }
         }
+        // Remove thought display here - we'll only show the final result
         
         if (data.result) {
-          this.logMessage(`    {green-fg}✅ Result: ${data.result.slice(0, 300).replace(/\n/g, ' ')}...{/green-fg}`);
+          const maxWidth = this.screen.width - 8;
+          const cleanResult = data.result.replace(/\n/g, ' ').trim();
+          const truncatedResult = cleanResult.length > maxWidth ? 
+            cleanResult.slice(0, maxWidth - 3) + '...' : cleanResult;
+          this.logMessage(`    {green-fg}✅ Result: ${truncatedResult}{/green-fg}`);
         }
       }
     });
 
     this.socket.on('task:result', (data: { result: string }) => {
-      this.logMessage(`{magenta-fg}{bold}🤖 ${this.currentAgent?.name || 'Agent'}:{/bold}{/magenta-fg} ${data.result}`);
+      const maxWidth = this.screen.width - 8; // Account for borders and padding
+      const agentPrefix = `🤖 ${this.currentAgent?.name || 'Agent'}: `;
+      const prefixLength = agentPrefix.length;
+      
+      // Clean the result text
+      const cleanResult = data.result.replace(/\n/g, ' ').trim();
+      
+      // Split into words
+      const words = cleanResult.split(' ');
+      let lines = [];
+      let currentLine = '';
+      
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        const testLine = currentLine ? currentLine + ' ' + word : word;
+        const lineWidth = i === 0 ? prefixLength + testLine.length : testLine.length + 2; // +2 for indent
+        
+        if (lineWidth > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      
+      // Display the lines
+      if (lines.length > 0) {
+        this.logMessage(`{magenta-fg}{bold}${agentPrefix}{/bold}{/magenta-fg}${lines[0]}`);
+        for (let i = 1; i < lines.length && i < 8; i++) { // Show up to 8 lines
+          this.logMessage(`  ${lines[i]}`);
+        }
+        if (lines.length > 8) {
+          this.logMessage(`  {gray-fg}... (${lines.length - 8} more lines){/gray-fg}`);
+        }
+      }
+      
       this.screen.render();
     });
 

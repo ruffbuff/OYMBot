@@ -1,9 +1,9 @@
 # 🎯 TODO: Project Roadmap
 
-## ✅ Completed (v0.2.0)
+## ✅ Completed
 - [x] **Basic Gateway & Runtime**
 - [x] **Context Control**: Session-aware context implemented
-- [x] **Basic Blessed TUI**: Chat and thoughts panels
+- [x] **Basic Blessed TUI**: Chat and thoughts panels (improved text wrapping)
 - [x] **Basic Tool System**: File access, shell exec, web search, codebase search
 - [x] **Fix CLI Session Creation**: CLI sessions registered in Gateway
 - [x] **Robust Tool Parsing**: Agent JSON parsing fixed
@@ -13,6 +13,13 @@
 - [x] **Hot-reload**: Auto-reload AGENT.md on changes
 - [x] **Full FS Access**: Absolute paths, relative paths, ~ support
 - [x] **SOUL.md Integration**: Personality loaded into system prompt
+- [x] **Advanced Memory System**: Two-layer memory with search capabilities
+  - [x] Daily logs (memory/*.md) with auto-logging
+  - [x] Memory search (search_memory, search_sessions, get_recent_activity)
+  - [x] Auto-search memory for relevant questions
+  - [x] Improved system prompts with mandatory memory instructions
+- [x] **Agent Startup Validation**: Gateway won't start without agents
+- [x] **TOOLS.md Auto-generation**: Documentation created during onboarding
 
 ## 🔴 Critical (Must Have)
 
@@ -41,13 +48,17 @@
 ## 🟡 Important (Should Have)
 
 ### Memory & Context
-- [ ] **Memory Search**: Semantic search in MEMORY.md + memory/*.md
-  - [ ] memory_search tool
-  - [ ] memory_get tool
-  - [ ] Vector embeddings (optional)
+- [x] **Memory Search**: Semantic search in MEMORY.md + memory/*.md
+  - [x] search_memory tool
+  - [x] search_sessions tool
+  - [x] get_recent_activity tool
+  - [x] Auto-search for relevant questions
+  - [ ] Vector embeddings (optional, for semantic search)
+- [x] **Daily Memory Logs**: Automatic memory/YYYY-MM-DD.md files
+- [x] **Auto-logging**: Automatic logging of user requests and task completions
 - [ ] **Advanced Context Control**: Token-aware manager for different model windows
-- [ ] **Daily Memory Logs**: Automatic memory/YYYY-MM-DD.md files
 - [ ] **Memory Compaction**: Automatic summarization of old memories
+- [ ] **Memory Flush**: Save important context before compaction
 
 ### Skills System
 - [ ] **Skills Architecture**: Reusable prompt templates
@@ -117,27 +128,28 @@
 - [ ] **Agent Marketplace**: Share and discover agents
 - [ ] **Collaborative Agents**: Multiple agents working on same task
 
-## 📊 Version Milestones
+## 📊 Development Status
 
-### v0.2.0 (Current) ✅
+### Current Features ✅
 - Autonomous Planner
 - Full FS access
 - SOUL.md integration
 - Hot-reload
+- Advanced Memory System
+- Agent startup validation
+- TOOLS.md auto-generation
+- CLI text wrapping improvements
 
-### v0.3.0 (Next)
-- Tool Policies
-- Plugin System
-- Memory Search
+### Next Priorities 🔄
+- Tool Policies (security)
+- Plugin System (extensibility)
 - Sandboxed Execution
-
-### v0.4.0
 - Skills System
 - Subagents
 - Browser Tool
 - Advanced TUI
 
-### v1.0.0 (Stable)
+### Future Goals 🚀
 - All critical features
 - Production-ready security
 - Full documentation
@@ -148,6 +160,9 @@
 - [ ] Session persistence could be improved
 - [ ] Error handling in planner needs work
 - [ ] Tool execution timeout handling
+- [ ] **Memory Flush not implemented**: Agents don't save context before compaction
+- [ ] **No vector embeddings**: Only basic text search available
+- [ ] **No memory compaction**: Old logs accumulate without summarization
 
 ## 💡 Ideas for Future
 - Agent-to-agent communication protocol

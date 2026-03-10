@@ -5,6 +5,7 @@ A self-hosted, open-source platform for running autonomous AI agents. Inspired b
 ## ✨ Features
 
 - **Autonomous Agents**: Agents can execute multi-step tasks, use tools, and learn from their actions.
+- **Advanced Memory System**: Two-layer memory (long-term + daily logs) with search capabilities, inspired by OpenClaw but improved.
 - **Tooling**: Built-in tools for file system access (`read`, `write`, `exec`) and internet search.
 - **Multi-Channel**: Interact with your agents via CLI, Telegram, or a web-based "Office" UI.
 - **Extensible**: Easily add new agents and tools.
@@ -29,10 +30,12 @@ npm install
 # This will ask for your AI provider keys and create a .env file.
 npm run onboard
 
-# 4. Start the gateway server
+# 4. Start the gateway server (only works after onboarding)
 # The server will run on http://localhost:4001
 npm run gateway
 ```
+
+**Important:** You must run `npm run onboard` before starting the gateway. The gateway will not start without at least one agent configured.
 
 ### 2. Interacting with Your Agent
 
@@ -66,8 +69,9 @@ If you configured a Telegram bot during onboarding, simply start a chat with you
 ## 🔧 How It Works
 
 - **Agents**: Each agent is defined by a set of Markdown files in the `backend/agents/` directory (e.g., `AGENT.md`, `MEMORY.md`).
+- **Memory System**: Two-layer architecture with long-term memory (MEMORY.md) and daily logs (memory/*.md). Agents can search through memory and past conversations. See [MEMORY_GUIDE.md](./MEMORY_GUIDE.md) for details.
 - **Gateway**: A central Node.js server that handles WebSocket connections, API requests, and agent task execution.
-- **Tools**: Agents can use tools like `shell_exec`, `search_web`, and `write_file` to interact with the environment.
+- **Tools**: Agents can use tools like `shell_exec`, `search_web`, `write_file`, `search_memory`, and more to interact with the environment.
 - **Sessions**: The system maintains separate conversation sessions for each channel (CLI, Web, Telegram).
 
 ##  roadmap

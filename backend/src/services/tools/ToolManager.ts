@@ -114,7 +114,7 @@ export class ToolManager {
     // Agent Self-Improvement & Memory Tools
     this.registerTool({
       name: 'remember_fact',
-      description: 'Save an important fact to MEMORY.md',
+      description: 'Save an important fact to long-term MEMORY.md (use for information that will be relevant weeks/months later)',
       parameters: {
         fact: 'string - fact to remember',
       },
@@ -122,7 +122,76 @@ export class ToolManager {
         if (!agentId) return 'Error: agentId missing';
         try {
           await this.memoryManager.addLongTermMemory(agentId, params.fact);
-          return `✅ Fact remembered: "${params.fact}"`;
+          return `✅ Fact remembered in long-term memory: "${params.fact}"`;
+        } catch (error) {
+          return `Error: ${error}`;
+        }
+      },
+    });
+
+    this.registerTool({
+      name: 'log_daily',
+      description: 'Log information to today\'s daily log (use for actions, decisions, and context relevant for today/this week)',
+      parameters: {
+        entry: 'string - what to log',
+      },
+      execute: async (params: { entry: string }, agentId?: string) => {
+        if (!agentId) return 'Error: agentId missing';
+        try {
+          await this.memoryManager.addDailyLog(agentId, params.entry);
+          return `✅ Logged to daily log: "${params.entry}"`;
+        } catch (error) {
+          return `Error: ${error}`;
+        }
+      },
+    });
+
+    this.registerTool({
+      name: 'search_memory',
+      description: 'Search through long-term memory (MEMORY.md) and daily logs for specific information',
+      parameters: {
+        query: 'string - what to search for',
+      },
+      execute: async (params: { query: string }, agentId?: string) => {
+        if (!agentId) return 'Error: agentId missing';
+        try {
+          const results = await this.memoryManager.searchMemory(agentId, params.query);
+          return results;
+        } catch (error) {
+          return `Error: ${error}`;
+        }
+      },
+    });
+
+    this.registerTool({
+      name: 'search_sessions',
+      description: 'Search through past conversation sessions to find what was discussed before',
+      parameters: {
+        query: 'string - what to search for in past conversations',
+      },
+      execute: async (params: { query: string }, agentId?: string) => {
+        if (!agentId) return 'Error: agentId missing';
+        try {
+          const results = await this.memoryManager.searchSessions(agentId, params.query);
+          return results;
+        } catch (error) {
+          return `Error: ${error}`;
+        }
+      },
+    });
+
+    this.registerTool({
+      name: 'get_recent_activity',
+      description: 'Get summary of recent activity from daily logs (last N days)',
+      parameters: {
+        days: 'number - how many days back to look (default: 7)',
+      },
+      execute: async (params: { days?: number }, agentId?: string) => {
+        if (!agentId) return 'Error: agentId missing';
+        try {
+          const days = params.days || 7;
+          const activity = await this.memoryManager.getRecentMemory(agentId, days);
+          return activity || 'No recent activity found';
         } catch (error) {
           return `Error: ${error}`;
         }

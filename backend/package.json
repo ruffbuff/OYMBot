@@ -1,6 +1,6 @@
 {
   "name": "oym-bot-backend",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Backend server for AI Office Platform",
   "main": "dist/index.js",
@@ -8,6 +8,7 @@
     "onboard": "tsx src/cli/onboard.ts",
     "gateway": "tsx src/index.ts",
     "chat": "tsx src/cli/ChatBlessed.ts",
+    "status": "tsx -e \"import {MemoryManager} from './src/services/memory/MemoryManager.js'; const mm = new MemoryManager('./agents'); mm.loadAllAgents().then(agents => console.log(agents.length > 0 ? '✅ Ready to start gateway' : '❌ Run npm run onboard first'))\"",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start:prod": "node dist/index.js",
