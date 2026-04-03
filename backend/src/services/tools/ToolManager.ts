@@ -10,8 +10,10 @@ const execPromise = promisify(exec);
 export interface Tool {
   name: string;
   description: string;
+  group: 'fs' | 'shell' | 'network' | 'memory' | 'other';
+  isDangerous?: boolean;
   parameters: Record<string, any>;
-  execute: (params: any, agentId?: string) => Promise<string>;
+  execute: (params: any, agentId?: string, config?: AgentConfig) => Promise<string>;
 }
 
 export class ToolManager {
@@ -28,16 +30,16 @@ export class ToolManager {
     this.registerTool({
       name: 'read_file',
       description: 'Read contents of a file (supports absolute paths, relative paths, and ~ for home)',
+      group: 'fs',
       parameters: {
         path: 'string - file path (absolute: /path/to/file, relative: ./file, home: ~/file)',
       },
-      execute: async (params: { path: string }) => {
+      execute: async (params: { path: string }, agentId?: string, config?: AgentConfig) => {
         try {
-          // Expand ~ to home directory
-          let filePath = params.path;
-          if (filePath.startsWith('~/')) {
-            const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-            filePath = path.join(homeDir, filePath.slice(2));
+          // Resolve and sandbox check
+          const filePath = this.resolvePath(params.path, config);
+          if (!this.isPathAllowed(filePath, config)) {
+            return `Error: Access to ${params.path} is denied by sandbox policy.`;
           }
           
           const content = await fs.readFile(filePath, 'utf-8');
@@ -51,17 +53,15 @@ export class ToolManager {
     this.registerTool({
       name: 'list_directory',
       description: 'List files and directories in a path (supports absolute, relative, and ~ paths)',
+      group: 'fs',
       parameters: {
         path: 'string - directory path (absolute: /path, relative: ./path, home: ~/path, default: current)',
       },
-      execute: async (params: { path?: string }) => {
+      execute: async (params: { path?: string }, agentId?: string, config?: AgentConfig) => {
         try {
-          let dirPath = params.path || '.';
-          
-          // Expand ~ to home directory
-          if (dirPath.startsWith('~/')) {
-            const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-            dirPath = path.join(homeDir, dirPath.slice(2));
+          const dirPath = this.resolvePath(params.path || '.', config);
+          if (!this.isPathAllowed(dirPath, config)) {
+            return `Error: Access to ${params.path || '.'} is denied by sandbox policy.`;
           }
           
           const items = await fs.readdir(dirPath, { withFileTypes: true });
@@ -79,11 +79,13 @@ export class ToolManager {
     this.registerTool({
       name: 'write_file',
       description: 'Write content to a file (supports absolute, relative, and ~ paths). PROTECTED: Cannot overwrite agent config files.',
+      group: 'fs',
+      isDangerous: true,
       parameters: {
         path: 'string - file path (absolute: /path/to/file, relative: ./file, home: ~/file)',
         content: 'string - content to write',
       },
-      execute: async (params: { path: string; content: string }) => {
+      execute: async (params: { path: string; content: string }, agentId?: string, config?: AgentConfig) => {
         try {
           const forbiddenFiles = ['AGENT.md', 'MEMORY.md', 'CONTEXT.md', '.env'];
           const filename = path.basename(params.path);
@@ -92,11 +94,9 @@ export class ToolManager {
             return `Error: Writing directly to ${filename} is forbidden for security. Use 'remember_fact' or 'update_skills' tools instead.`;
           }
 
-          // Expand ~ to home directory
-          let filePath = params.path;
-          if (filePath.startsWith('~/')) {
-            const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-            filePath = path.join(homeDir, filePath.slice(2));
+          const filePath = this.resolvePath(params.path, config);
+          if (!this.isPathAllowed(filePath, config)) {
+            return `Error: Access to ${params.path} is denied by sandbox policy.`;
           }
 
           // Create directory if it doesn't exist
@@ -115,6 +115,7 @@ export class ToolManager {
     this.registerTool({
       name: 'remember_fact',
       description: 'Save an important fact to long-term MEMORY.md (use for information that will be relevant weeks/months later)',
+      group: 'memory',
       parameters: {
         fact: 'string - fact to remember',
       },
@@ -132,6 +133,7 @@ export class ToolManager {
     this.registerTool({
       name: 'log_daily',
       description: 'Log information to today\'s daily log (use for actions, decisions, and context relevant for today/this week)',
+      group: 'memory',
       parameters: {
         entry: 'string - what to log',
       },
@@ -149,6 +151,7 @@ export class ToolManager {
     this.registerTool({
       name: 'search_memory',
       description: 'Search through long-term memory (MEMORY.md) and daily logs for specific information',
+      group: 'memory',
       parameters: {
         query: 'string - what to search for',
       },
@@ -166,6 +169,7 @@ export class ToolManager {
     this.registerTool({
       name: 'search_sessions',
       description: 'Search through past conversation sessions to find what was discussed before',
+      group: 'memory',
       parameters: {
         query: 'string - what to search for in past conversations',
       },
@@ -183,6 +187,7 @@ export class ToolManager {
     this.registerTool({
       name: 'get_recent_activity',
       description: 'Get summary of recent activity from daily logs (last N days)',
+      group: 'memory',
       parameters: {
         days: 'number - how many days back to look (default: 7)',
       },
@@ -201,6 +206,7 @@ export class ToolManager {
     this.registerTool({
       name: 'update_skills',
       description: 'Add new skills to AGENT.md',
+      group: 'memory',
       parameters: {
         skills: 'array of strings - new skills',
       },
@@ -219,6 +225,8 @@ export class ToolManager {
     this.registerTool({
       name: 'shell_exec',
       description: 'Execute a shell command',
+      group: 'shell',
+      isDangerous: true,
       parameters: {
         command: 'string - command to execute',
       },
@@ -240,13 +248,17 @@ export class ToolManager {
     this.registerTool({
       name: 'search_files',
       description: 'Search for a text pattern or keyword inside files in the project',
+      group: 'fs',
       parameters: {
         pattern: 'string - text to search for',
         directory: 'string - directory to search in (default: current)',
       },
-      execute: async (params: { pattern: string; directory?: string }) => {
+      execute: async (params: { pattern: string; directory?: string }, agentId?: string, config?: AgentConfig) => {
         try {
-          const dir = params.directory || '.';
+          const dir = this.resolvePath(params.directory || '.', config);
+          if (!this.isPathAllowed(dir, config)) {
+            return `Error: Access to ${params.directory || '.'} is denied by sandbox policy.`;
+          }
           // Using native grep for speed
           const { stdout } = await execPromise(`grep -rni "${params.pattern}" ${dir} --exclude-dir=node_modules --exclude-dir=.next --max-count=20`);
           return stdout || `No matches found for "${params.pattern}"`;
@@ -259,14 +271,16 @@ export class ToolManager {
     // Advanced codebase search (for planner)
     this.registerTool({
       name: 'search_codebase',
+      group: 'fs',
       description: 'Search for patterns in codebase using grep (excludes node_modules, .git, etc.)',
       parameters: {
         pattern: 'string - regex pattern to search',
         filePattern: 'string - file pattern (e.g., "*.ts", "*.js") - optional',
       },
-      execute: async (params: { pattern: string; filePattern?: string }) => {
+      execute: async (params: { pattern: string; filePattern?: string }, agentId?: string, config?: AgentConfig) => {
         try {
-          let command = `grep -rni "${params.pattern}" . --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next --exclude-dir=dist --max-count=30`;
+          const sandbox = config?.tools?.sandboxRoot || process.cwd();
+          let command = `grep -rni "${params.pattern}" ${sandbox} --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next --exclude-dir=dist --max-count=30`;
           
           if (params.filePattern) {
             command += ` --include="${params.filePattern}"`;
@@ -286,14 +300,18 @@ export class ToolManager {
     // Get file tree (for planner to understand project structure)
     this.registerTool({
       name: 'get_file_tree',
+      group: 'fs',
       description: 'Get recursive directory structure (tree view)',
       parameters: {
         path: 'string - directory path (default: current)',
         maxDepth: 'number - maximum depth (default: 3)',
       },
-      execute: async (params: { path?: string; maxDepth?: number }) => {
+      execute: async (params: { path?: string; maxDepth?: number }, agentId?: string, config?: AgentConfig) => {
         try {
-          const dirPath = params.path || '.';
+          const dirPath = this.resolvePath(params.path || '.', config);
+          if (!this.isPathAllowed(dirPath, config)) {
+            return `Error: Access to ${params.path || '.'} is denied by sandbox policy.`;
+          }
           const maxDepth = params.maxDepth || 3;
           
           // Use tree command if available, otherwise use find
@@ -314,6 +332,7 @@ export class ToolManager {
     // Advanced Web Scraper
     this.registerTool({
       name: 'scrape_website',
+      group: 'network',
       description: 'Deeply scrape a website to get its full text content, useful for reading documentation',
       parameters: {
         url: 'string - valid URL starting with http/https',
@@ -350,6 +369,7 @@ export class ToolManager {
     // Environment Context Tool
     this.registerTool({
       name: 'get_working_directory',
+      group: 'fs',
       description: 'Get current directory',
       parameters: {},
       execute: async () => {
@@ -360,6 +380,7 @@ export class ToolManager {
     // Web Search Tools
     this.registerTool({
       name: 'search_web',
+      group: 'network',
       description: 'Search internet using DuckDuckGo',
       parameters: { query: 'string - search query' },
       execute: async (params: { query: string }) => {
@@ -393,6 +414,7 @@ export class ToolManager {
 
     this.registerTool({
       name: 'web_search',
+      group: 'network',
       description: 'Fetch content from URL',
       parameters: { query: 'string - URL' },
       execute: async (params: { query: string }) => {
@@ -407,6 +429,67 @@ export class ToolManager {
     });
 
     logger.info(`Registered ${this.tools.size} tools`);
+  }
+
+  private resolvePath(filePath: string, config?: AgentConfig): string {
+    let resolvedPath = filePath;
+    
+    // Expand ~ to home directory
+    if (resolvedPath.startsWith('~/')) {
+      const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+      resolvedPath = path.join(homeDir, resolvedPath.slice(2));
+    } else if (!path.isAbsolute(resolvedPath)) {
+      // If relative, resolve from sandboxRoot or current working directory
+      const base = config?.tools?.sandboxRoot || process.cwd();
+      resolvedPath = path.resolve(base, resolvedPath);
+    }
+    
+    return resolvedPath;
+  }
+
+  private isPathAllowed(filePath: string, config?: AgentConfig): boolean {
+    if (!config?.tools?.sandboxRoot) return true; // No sandbox restricted
+    
+    const sandboxRoot = path.resolve(config.tools.sandboxRoot);
+    const absolutePath = path.resolve(filePath);
+    
+    return absolutePath.startsWith(sandboxRoot);
+  }
+
+  public canExecute(agent: AgentConfig, toolName: string): { allowed: boolean; reason?: string; action?: 'allow' | 'deny' | 'ask' } {
+    const tool = this.getTool(toolName);
+    if (!tool) return { allowed: false, reason: `Tool "${toolName}" not found` };
+
+    // Check specific tool policy
+    const policies = agent.tools?.policies || [];
+    
+    // 1. Check direct tool policy
+    const toolPolicy = policies.find(p => p.name === toolName);
+    if (toolPolicy) {
+      if (toolPolicy.action === 'deny') return { allowed: false, reason: `Policy: tool "${toolName}" is denied`, action: 'deny' };
+      if (toolPolicy.action === 'ask') return { allowed: true, action: 'ask' };
+      if (toolPolicy.action === 'allow') return { allowed: true, action: 'allow' };
+    }
+
+    // 2. Check group policy
+    const groupPolicy = policies.find(p => p.name === `group:${tool.group}`);
+    if (groupPolicy) {
+      if (groupPolicy.action === 'deny') return { allowed: false, reason: `Policy: group "${tool.group}" is denied`, action: 'deny' };
+      if (groupPolicy.action === 'ask') return { allowed: true, action: 'ask' };
+      if (groupPolicy.action === 'allow') return { allowed: true, action: 'allow' };
+    }
+
+    // 3. Check legacy disabled list
+    if (agent.tools?.disabled?.includes(toolName)) {
+      return { allowed: false, reason: `Tool "${toolName}" is explicitly disabled`, action: 'deny' };
+    }
+
+    // Default: Dangerous tools should ask if not explicitly allowed
+    if (tool.isDangerous) {
+      return { allowed: true, action: 'ask' };
+    }
+
+    return { allowed: true, action: 'allow' };
   }
 
   registerTool(tool: Tool): void {
@@ -431,11 +514,23 @@ export class ToolManager {
     return tools.map((t) => `${t.name}: ${t.description}`).join('\n');
   }
 
-  async executeTool(name: string, params: any, agentId?: string): Promise<string> {
+  async executeTool(name: string, params: any, agentId?: string, config?: AgentConfig): Promise<string> {
     const tool = this.getTool(name);
     if (!tool) return `Tool "${name}" not found`;
+
+    // Final security check before execution
+    if (config) {
+      const policy = this.canExecute(config, name);
+      if (!policy.allowed) {
+        return `Security Error: ${policy.reason}`;
+      }
+      if (policy.action === 'ask') {
+        return `SECURITY: Tool "${name}" requires manual confirmation. Please ask the user for permission to execute this specific command: ${JSON.stringify(params)}`;
+      }
+    }
+
     try {
-      return await tool.execute(params, agentId);
+      return await tool.execute(params, agentId, config);
     } catch (error) {
       return `Error executing tool: ${error}`;
     }

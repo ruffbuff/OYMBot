@@ -2,6 +2,12 @@ export type AgentStatus = 'idle' | 'thinking' | 'working' | 'error' | 'offline';
 export type AgentType = 'api-assistant' | 'autonomous-agent';
 export type LLMProvider = 'openai' | 'ollama' | 'anthropic' | 'openrouter';
 
+export interface ToolPolicy {
+  name: string; // tool name or group name (group:fs, group:shell)
+  action: 'allow' | 'deny' | 'ask';
+  sandbox?: string; // root directory for fs operations
+}
+
 export interface AgentConfig {
   id: string;
   name: string;
@@ -22,6 +28,8 @@ export interface AgentConfig {
   tools?: {
     enabled: string[]; // List of enabled tool names
     disabled: string[]; // List of disabled tool names
+    policies?: ToolPolicy[]; // Advanced tool policies
+    sandboxRoot?: string; // Default sandbox root for this agent
   };
   telegram?: {
     token: string;

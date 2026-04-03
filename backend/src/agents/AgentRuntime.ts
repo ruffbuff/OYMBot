@@ -185,7 +185,8 @@ export class AgentRuntime {
         const result = await this.toolManager.executeTool(
           step.action,
           step.params,
-          agentId
+          agentId,
+          agent
         );
 
         step.result = result;
@@ -386,7 +387,8 @@ export class AgentRuntime {
           const toolResult = await this.toolManager.executeTool(
             toolCall.tool,
             toolCall.params || {},
-            agentId
+            agentId,
+            agent
           );
 
           logger.info(`[Step ${loopCount}] Result length: ${toolResult.length}`);
