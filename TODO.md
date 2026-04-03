@@ -24,26 +24,26 @@
 ## 🔴 Critical (Must Have)
 
 ### Security & Safety
-- [ ] **Tool Policies System**: Layered policies (global → agent → group → sandbox)
-  - [ ] Tool groups (group:fs, group:runtime, group:network)
-  - [ ] Per-agent tool allowlist/denylist
-  - [ ] Per-channel tool restrictions
-  - [ ] Dangerous command confirmation
-- [ ] **Sandboxed Execution**: Workspace isolation for file operations
-  - [ ] Restrict file access to workspace by default
-  - [ ] Whitelist for absolute paths
-  - [ ] Safe shell command execution
-- [ ] **Telegram Whitelist**: Restrict access by User ID
-- [ ] **Rate Limiting**: Prevent abuse
+- [x] **Tool Policies System**: Layered policies (global → agent → group → sandbox)
+  - [x] Tool groups (group:fs, group:runtime, group:network)
+  - [x] Per-agent tool allowlist/denylist
+  - [x] Per-channel tool restrictions
+  - [x] Dangerous command confirmation
+- [x] **Sandboxed Execution**: Workspace isolation for file operations
+  - [x] Restrict file access to workspace by default
+  - [x] Whitelist for absolute paths
+  - [x] Safe shell command execution
+- [x] **Telegram Whitelist**: Restrict access by User ID + Pair Codes
+- [x] **Rate Limiting**: Prevent abuse (Message throttling)
 
 ### Plugin System
-- [ ] **Plugin Architecture**: Hook-based extensibility (like OpenClaw)
-  - [ ] before_tool_call / after_tool_call hooks
-  - [ ] before_agent_start / agent_end hooks
-  - [ ] message_received / message_sent hooks
-  - [ ] Plugin registry and loader
-- [ ] **Plugin Tools**: Plugins can register custom tools
-- [ ] **Plugin Commands**: Plugins can add custom commands
+- [x] **Plugin Architecture**: Hook-based extensibility (like OpenClaw)
+  - [x] before_tool_call / after_tool_call hooks
+  - [x] before_agent_start / agent_end hooks
+  - [x] message_received / message_sent hooks
+  - [x] Plugin registry and loader
+- [x] **Plugin Tools**: Plugins can register custom tools
+- [x] **Plugin Commands**: Plugins can add custom commands
 
 ## 🟡 Important (Should Have)
 
@@ -56,22 +56,19 @@
   - [ ] Vector embeddings (optional, for semantic search)
 - [x] **Daily Memory Logs**: Automatic memory/YYYY-MM-DD.md files
 - [x] **Auto-logging**: Automatic logging of user requests and task completions
-- [ ] **Advanced Context Control**: Token-aware manager for different model windows
-- [ ] **Memory Compaction**: Automatic summarization of old memories
-- [ ] **Memory Flush**: Save important context before compaction
+- [x] **Advanced Context Control**: Token-aware manager for different model windows
+- [x] **Memory Compaction**: Automatic summarization of old memories
+- [x] **Memory Flush**: Save important context before compaction
 
 ### Skills System
-- [ ] **Skills Architecture**: Reusable prompt templates
-  - [ ] Workspace skills (workspace/skills/)
-  - [ ] Global skills (~/.oym-bot/skills/)
-  - [ ] Skill loading and injection
+- [x] **Skills Architecture**: Reusable prompt templates
+  - [x] Workspace skills (workspace/skills/)
+  - [x] Global skills (~/.oym-bot/skills/)
+  - [x] Skill loading and injection
 - [ ] **Skill Marketplace**: Browse and install community skills
 
 ### Multi-Agent
-- [ ] **Subagents**: Spawn child agents for subtasks
-  - [ ] sessions_spawn tool
-  - [ ] sessions_send tool
-  - [ ] sessions_list tool
+- [x] **Subagents**: Spawn child agents for subtasks (Implemented via `delegate_task` tool)
 - [ ] **Agent Routing**: Route messages to different agents
 - [ ] **Agent Collaboration**: Agents can work together
 
@@ -141,11 +138,7 @@
 - CLI text wrapping improvements
 
 ### Next Priorities 🔄
-- Tool Policies (security)
-- Plugin System (extensibility)
-- Sandboxed Execution
-- Skills System
-- Subagents
+- Agent Routing
 - Browser Tool
 - Advanced TUI
 
@@ -155,16 +148,23 @@
 - Full documentation
 - Testing suite
 
-## 🐛 Known Issues
+## 🐛 Known Issues & Bugs
 - [ ] TypeScript errors in some files (need npm install)
-- [ ] Session persistence could be improved
-- [ ] Error handling in planner needs work
-- [ ] Tool execution timeout handling
-- [ ] **Memory Flush not implemented**: Agents don't save context before compaction
+- [x] Session persistence could be improved (Save active connections to SQLite)
+- [x] Error handling in planner needs work (Loop prevention mechanisms)
+- [x] Tool execution timeout handling (Plugin blocking can stall execution)
+- [x] **Dangerous Action Leak**: `ToolManager` stores pending hashes forever if unused; needs a TTL/cleanup mechanism.
+- [x] **Memory Flush not implemented**: Agents don't save context before compaction
 - [ ] **No vector embeddings**: Only basic text search available
-- [ ] **No memory compaction**: Old logs accumulate without summarization
+- [x] **No memory compaction**: Old logs accumulate without summarization
 
-## 💡 Ideas for Future
+## 💡 Ideas for Future & Improvements
+- **Mission Control Panel**: Comprehensive frontend dashboard covering all agents, models, memory logs, and tasks.
+- **Top-Down Agent Visualizer**: React/Web renderer in frontend showing agents as workers (working/resting/sleeping) in a facility.
+- [x] **System Heartbeat & Cron jobs**: Recurring tasks, health-checking agents, and waking them up via scheduling.
+- Plugin installation from NPM / Git (Like OpenClaw's plugin marketplace)
+- [x] SQLite Auto-pruning for logs older than 30 days
+- Multi-Agent "Orchestrator" Agent template (Specialized in breaking down and spawning child agents)
 - Agent-to-agent communication protocol
 - Distributed agent network
 - Agent memory sharing

@@ -15,10 +15,10 @@
 - Нужна система ограничений и подтверждений
 
 **Tasks:**
-- [ ] Implement tool groups (fs, network, shell)
-- [ ] Per-agent tool restrictions
-- [ ] Dangerous command confirmation
-- [ ] Workspace sandboxing
+- [x] Implement tool groups (fs, network, shell)
+- [x] Per-agent tool restrictions
+- [x] Dangerous command confirmation
+- [x] Workspace sandboxing
 
 **Why Critical:** Без этого агенты могут навредить системе
 
@@ -28,9 +28,9 @@
 - Нужно сохранять важную информацию перед compaction
 
 **Tasks:**
-- [ ] Detect context window overflow
-- [ ] Extract important information before compaction
-- [ ] Auto-save to memory with smart prompts
+- [x] Detect context window overflow
+- [x] Extract important information before compaction
+- [x] Auto-save to memory with smart prompts
 
 **Why Important:** Предотвращает потерю важной информации
 
@@ -40,9 +40,9 @@
 - Нужно умное управление контекстом
 
 **Tasks:**
-- [ ] Token counting for different models
-- [ ] Smart context truncation
-- [ ] Priority-based context management
+- [x] Token counting for different models
+- [x] Smart context truncation
+- [x] Priority-based context management
 
 **Why Important:** Оптимизация работы с разными LLM
 
@@ -54,9 +54,9 @@
 - Возможность добавлять новые инструменты
 
 **Tasks:**
-- [ ] Hook-based architecture
-- [ ] Plugin registry and loader
-- [ ] Custom tool registration
+- [x] Hook-based architecture
+- [x] Plugin registry and loader
+- [x] Custom tool registration
 
 ### 5. Skills System
 **Priority: MEDIUM**
@@ -64,8 +64,8 @@
 - Специализация агентов
 
 **Tasks:**
-- [ ] Skill templates
-- [ ] Skill loading system
+- [x] Skill templates
+- [x] Skill loading system
 - [ ] Skill marketplace concept
 
 ### 6. Multi-Agent Support

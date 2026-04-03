@@ -6,7 +6,10 @@ import { ToolManager } from '../services/tools/ToolManager.js';
 import { CommandManager } from '../services/commands/CommandManager.js';
 import { PlannerService } from '../services/planner/PlannerService.js';
 import { SessionManager } from '../services/session/SessionManager.js';
+import { PluginManager } from '../services/plugins/PluginManager.js';
+import { SkillManager } from '../services/skills/SkillManager.js';
 import { logger } from '../utils/logger.js';
+import { estimateTokens, CONTEXT_THRESHOLD, CONTEXT_KEEP_RECENT } from '../utils/tokens.js';
 
 export class AgentRuntime {
   private memoryManager: MemoryManager;
@@ -15,8 +18,11 @@ export class AgentRuntime {
   private commandManager: CommandManager;
   private plannerService: PlannerService;
   private sessionManager: SessionManager;
+  private pluginManager: PluginManager;
+  private skillManager: SkillManager;
   private agents: Map<string, AgentConfig> = new Map();
   public onStep: ((data: { agentId: string; step: number; thought?: string; tool?: string; params?: any; result?: string; planProgress?: string }) => void) | null = null;
+  public onAgentStateChange: (() => void) | null = null;
 
   constructor(memoryManager: MemoryManager, llmManager: LLMManager, sessionManager: SessionManager) {
     this.memoryManager = memoryManager;
@@ -24,16 +30,130 @@ export class AgentRuntime {
     this.sessionManager = sessionManager;
     this.toolManager = new ToolManager(memoryManager);
     this.commandManager = new CommandManager();
+    this.pluginManager = new PluginManager(this.toolManager, this.commandManager);
+    this.skillManager = new SkillManager();
     this.plannerService = new PlannerService(llmManager);
   }
 
+  private startHeartbeat(): void {
+    // Run every 60 seconds
+    setInterval(async () => {
+      try {
+        if (!(this.memoryManager as any).getPendingCronJobs) return;
+
+        const jobs = await (this.memoryManager as any).getPendingCronJobs();
+        for (const job of jobs) {
+          logger.info(`⏰ Waking up agent ${job.agent_id} for cron job: ${job.description}`);
+
+          // Mark as run immediately to avoid duplicate triggering
+          await (this.memoryManager as any).markCronJobRun(job.id);
+
+          // Execute task autonomously
+          const sessionKey = 'cron_' + Date.now();
+          this.executeTask(job.agent_id, {
+            id: 'cron_' + Date.now(),
+            agentId: job.agent_id,
+            userId: 'system-cron',
+            description: `[SCHEDULED TASK]: ${job.description}`,
+            status: 'pending',
+            createdAt: new Date()
+          }, sessionKey).catch(e => {
+            logger.error(`Cron job execution failed for ${job.agent_id}:`, e);
+          });
+        }
+      } catch (error) {
+        logger.error('Heartbeat interval error:', error);
+      }
+    }, 60 * 1000);
+  }
+
   async initialize(): Promise<void> {
+    // Skills
+    await this.skillManager.initialize();
+
+    // Load plugins first so they can register tools and commands
+    await this.pluginManager.loadPlugins();
+
+    this.startHeartbeat();
+
+    // Register Multi-Agent Tools directly into ToolManager so they have access to AgentRuntime
+    this.toolManager.registerTool({
+      name: 'delegate_task',
+      description: 'Delegate a complex task to a specialized sub-agent. If the agent does not exist, it will be spawned automatically based on the role description.',
+      group: 'network',
+      parameters: {
+        agentRole: 'string - The role or title of the agent (e.g. Researcher, Coder). Keep it short.',
+        task: 'string - Detailed description of the task they need to perform',
+      },
+      execute: async (params: { agentRole: string; task: string }) => {
+        let targetAgent = Array.from(this.agents.values()).find(a => a.name.toLowerCase() === params.agentRole.toLowerCase());
+
+        // Spawn sub-agent if not exists
+        if (!targetAgent) {
+          const newAgentId = 'agent_' + Date.now();
+          targetAgent = {
+            id: newAgentId,
+            name: params.agentRole,
+            type: 'api-assistant',
+            status: 'idle',
+            energy: 100,
+            llm: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.7, maxTokens: 4000 }, // Using default light model for sub-agents
+            skills: [],
+            personality: `You are an expert ${params.agentRole}. You were spawned to handle a specific delegation. Do your job concisely and output the final result.`,
+            tools: { enabled: ['read_file', 'write_file', 'search_codebase', 'shell_exec'], disabled: [] }
+          };
+
+          await this.memoryManager.createAgent(targetAgent);
+          this.agents.set(newAgentId, targetAgent);
+          logger.info(`🤖 Spawned new sub-agent: ${targetAgent.name}`);
+          if (this.onAgentStateChange) this.onAgentStateChange();
+        }
+
+        const agentToUse = targetAgent as AgentConfig;
+
+        // Delegate execution
+        try {
+          const subSessionKey = 'delegation_' + Date.now();
+          logger.info(`Delegating task to ${agentToUse.name}...`);
+
+          const result = await this.executeTask(agentToUse.id, {
+            id: 'task_' + Date.now(),
+            agentId: agentToUse.id,
+            userId: 'system-delegation',
+            description: params.task,
+            status: 'pending',
+            createdAt: new Date()
+          }, subSessionKey);
+
+          return `Result from ${agentToUse.name}:\n\n${result}`;
+        } catch (e: any) {
+          return `Failed to delegate task: ${e.message}`;
+        }
+      }
+    });
+
+    this.toolManager.registerTool({
+      name: 'schedule_cron',
+      description: 'Schedule a recurring task for yourself. This acts like a cron job or heartbeat, waking you up automatically at the specified interval.',
+      group: 'other',
+      parameters: {
+        description: 'string - Detailed description of the task you need to perform when woken up',
+        intervalMinutes: 'number - How often to run this task in minutes (e.g. 15 for every 15 minutes, 60 for hourly)',
+      },
+      execute: async (params: { description: string; intervalMinutes: number }, agentId?: string) => {
+        if (!agentId) return "Error: execution context missing agent ID";
+        // MemoryManager needs casting if using SQLite implementation specifically
+        await (this.memoryManager as any).scheduleCronJob(agentId, params.description, Number(params.intervalMinutes));
+        return `✅ Successfully scheduled recurring task: "${params.description}" every ${params.intervalMinutes} minutes.`;
+      }
+    });
+
     // Load all agents from disk
-    const agents = await this.memoryManager.loadAllAgents();
+    const agents = await (this.memoryManager as any).loadAllAgents();
     for (const agent of agents) {
       this.agents.set(agent.id, agent);
     }
-    
+
     // Start watching for changes (Hot-reload)
     this.memoryManager.watchAgents(async (agentId: string) => {
       try {
@@ -58,6 +178,13 @@ export class AgentRuntime {
     }
   }
 
+  async updateAgent(config: AgentConfig): Promise<void> {
+    await this.memoryManager.createAgent(config);
+    this.agents.set(config.id, config);
+    logger.info(`💾 Agent ${config.id} config updated and saved.`);
+    if (this.onAgentStateChange) this.onAgentStateChange();
+  }
+
   async executeTask(agentId: string, task: Task, sessionKey?: string): Promise<string> {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -65,16 +192,19 @@ export class AgentRuntime {
     }
 
     try {
+      // Execute plugin hook before parsing task
+      task.description = await this.pluginManager.executeMessageReceived(task.description, { agentId, agent, sessionKey, userId: task.userId });
+
       // Auto-log user request to daily log
       await this.memoryManager.addDailyLog(
-        agentId, 
+        agentId,
         `User request: ${task.description.slice(0, 200)}`
       );
 
       // Check if message is a command
       if (this.commandManager.isCommand(task.description)) {
         logger.info(`Processing command: ${task.description} for session: ${sessionKey || 'legacy'}`);
-        
+
         const commandResult = await this.commandManager.executeCommand(
           task.description,
           {
@@ -84,6 +214,7 @@ export class AgentRuntime {
             sessionKey: sessionKey || 'legacy',
             agent,
             memoryManager: this.memoryManager,
+            toolManager: this.toolManager,
           }
         );
 
@@ -94,7 +225,7 @@ export class AgentRuntime {
 
       // Check if this is a complex task that needs planning
       const needsPlanning = this.plannerService.isComplexTask(task.description);
-      
+
       let result: string;
       if (needsPlanning && sessionKey) {
         logger.info(`🏗️ Complex task detected, using planner mode`);
@@ -110,17 +241,20 @@ export class AgentRuntime {
         `Completed task: ${task.description.slice(0, 100)} - Mode: ${needsPlanning ? 'Planner' : 'Reactive'}`
       );
 
+      // Execute plugin hook after task completion
+      result = await this.pluginManager.executeMessageSent(result, { agentId, agent, sessionKey, userId: task.userId });
+
       return result;
     } catch (error) {
       logger.error(`Task failed for ${agentId}:`, error);
       await this.updateAgentStatus(agentId, 'error');
-      
+
       // Log error to daily log
       await this.memoryManager.addDailyLog(
         agentId,
         `ERROR: Task failed - ${task.description.slice(0, 100)}`
       );
-      
+
       throw error;
     }
   }
@@ -130,14 +264,14 @@ export class AgentRuntime {
    */
   private async executeWithPlanner(agentId: string, task: Task, sessionKey: string): Promise<string> {
     const agent = this.agents.get(agentId)!;
-    
+
     // Update status
     await this.updateAgentStatus(agentId, 'thinking');
 
     // Phase 1: PLANNING (Architect)
     logger.info(`📋 Phase 1: Creating execution plan...`);
     const plan = await this.plannerService.createPlan(agent, task.description);
-    
+
     // Save plan to session
     this.sessionManager.setSessionPlan(sessionKey, plan);
 
@@ -161,9 +295,9 @@ export class AgentRuntime {
     for (let i = 0; i < plan.steps.length; i++) {
       const step = plan.steps[i];
       plan.currentStepIndex = i;
-      
+
       logger.info(`[Step ${i + 1}/${plan.steps.length}] ${step.description}`);
-      
+
       // Update step status
       step.status = 'in_progress';
       this.sessionManager.setSessionPlan(sessionKey, plan);
@@ -181,13 +315,23 @@ export class AgentRuntime {
       }
 
       try {
-        // Execute the step
-        const result = await this.toolManager.executeTool(
-          step.action,
-          step.params,
-          agentId,
-          agent
-        );
+        // Plugin Execution Hook
+        const canExecute = await this.pluginManager.executeBeforeToolCall(step.action, step.params, { agentId, agent, sessionKey });
+
+        let result: string;
+        if (!canExecute) {
+          result = `Tool ${step.action} was blocked by a plugin.`;
+        } else {
+          // Execute the tool
+          let rawResult = await this.toolManager.executeTool(
+            step.action,
+            step.params,
+            agentId,
+            agent
+          );
+
+          result = await this.pluginManager.executeAfterToolCall(step.action, step.params, rawResult, { agentId, agent, sessionKey });
+        }
 
         step.result = result;
         step.status = 'completed';
@@ -216,9 +360,9 @@ export class AgentRuntime {
         step.error = error.message;
         step.status = 'failed';
         executionLog.push(`❌ Step ${i + 1}: ${step.description}\nError: ${error.message}`);
-        
+
         logger.error(`❌ Step ${i + 1} failed:`, error);
-        
+
         // Try to refactor plan
         needsRefactor = true;
         break;
@@ -233,19 +377,19 @@ export class AgentRuntime {
 
     if (needsRefactor && plan.currentStepIndex < plan.steps.length - 1) {
       logger.info(`🔄 Plan needs refactoring, consulting architect...`);
-      
+
       const executionContext = executionLog.join('\n\n');
       const refactoredPlan = await this.plannerService.refactorPlan(agent, plan, executionContext);
-      
+
       this.sessionManager.setSessionPlan(sessionKey, refactoredPlan);
-      
+
       finalResponse = `I've completed ${plan.currentStepIndex + 1} steps, but encountered issues. I've created a new plan to continue. Would you like me to proceed?`;
     } else {
       // All steps completed
       plan.status = 'completed';
       plan.completedAt = new Date();
       this.sessionManager.clearSessionPlan(sessionKey);
-      
+
       const successCount = plan.steps.filter(s => s.status === 'completed').length;
       finalResponse = `✅ Task completed! Executed ${successCount}/${plan.steps.length} steps successfully.\n\nSummary:\n${executionLog.slice(-3).join('\n\n')}`;
     }
@@ -254,10 +398,10 @@ export class AgentRuntime {
     await this.memoryManager.saveMessageToTranscript(agentId, 'user', task.description, sessionKey);
     await this.memoryManager.saveMessageToTranscript(agentId, 'assistant', finalResponse, sessionKey);
 
-    // Update context
-    const context = await this.memoryManager.loadContext(agentId, sessionKey);
-    const updatedContext = `${context}\n\nUser: ${task.description}\nAssistant: ${finalResponse}\n`;
-    await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
+    // Update context with memory flush if needed
+    if (sessionKey) {
+      await this.updateSessionContext(agentId, sessionKey, task.description, finalResponse);
+    }
 
     // Reset status
     await this.updateAgentStatus(agentId, 'idle');
@@ -270,7 +414,7 @@ export class AgentRuntime {
    */
   private async executeReactive(agentId: string, task: Task, sessionKey?: string): Promise<string> {
     const agent = this.agents.get(agentId)!;
-    
+
     // Update agent status
     await this.updateAgentStatus(agentId, 'thinking');
 
@@ -281,9 +425,9 @@ export class AgentRuntime {
     // AUTO-SEARCH MEMORY for certain types of questions
     let memorySearchResults = '';
     const userMessage = task.description.toLowerCase();
-    
+
     // Check if user is asking about past interactions, preferences, or facts
-    const shouldSearchMemory = 
+    const shouldSearchMemory =
       userMessage.includes('помнишь') || userMessage.includes('remember') ||
       userMessage.includes('раньше') || userMessage.includes('before') ||
       userMessage.includes('предпочитаю') || userMessage.includes('prefer') ||
@@ -317,21 +461,21 @@ export class AgentRuntime {
           .filter(word => word.length > 2)
           .slice(0, 3)
           .join(' ');
-        
+
         // Search in memory
         const memoryResults = await this.memoryManager.searchMemory(agentId, searchQuery);
-        
+
         // Search in sessions
         const sessionResults = await this.memoryManager.searchSessions(agentId, searchQuery);
-        
+
         if (memoryResults && !memoryResults.includes('No results found')) {
           memorySearchResults += `\n# FOUND IN MEMORY:\n${memoryResults}\n`;
         }
-        
+
         if (sessionResults && !sessionResults.includes('No results found')) {
           memorySearchResults += `\n# FOUND IN PAST CONVERSATIONS:\n${sessionResults}\n`;
         }
-        
+
         logger.info(`Auto-searched memory for query: "${searchQuery}"`);
       } catch (error) {
         logger.error('Auto memory search failed:', error);
@@ -340,7 +484,7 @@ export class AgentRuntime {
 
     // Build initial system prompt with memory search results
     const systemPrompt = await this.buildSystemPrompt(agent, memory, agentId);
-    
+
     let loopCount = 0;
     const MAX_LOOPS = 5;
     let finalResponse = '';
@@ -381,15 +525,25 @@ export class AgentRuntime {
 
       if (toolCall) {
         logger.info(`[Step ${loopCount}] Tool: ${toolCall.tool}`);
-        
+
         try {
-          // Execute tool
-          const toolResult = await this.toolManager.executeTool(
-            toolCall.tool,
-            toolCall.params || {},
-            agentId,
-            agent
-          );
+          // Plugin Execution Hook
+          const canExecute = await this.pluginManager.executeBeforeToolCall(toolCall.tool, toolCall.params || {}, { agentId, agent, sessionKey });
+
+          let toolResult: string;
+          if (!canExecute) {
+            toolResult = `Tool ${toolCall.tool} was blocked by a plugin.`;
+          } else {
+            // Execute tool
+            let rawResult = await this.toolManager.executeTool(
+              toolCall.tool,
+              toolCall.params || {},
+              agentId,
+              agent
+            );
+
+            toolResult = await this.pluginManager.executeAfterToolCall(toolCall.tool, toolCall.params || {}, rawResult, { agentId, agent, sessionKey });
+          }
 
           logger.info(`[Step ${loopCount}] Result length: ${toolResult.length}`);
 
@@ -426,9 +580,10 @@ export class AgentRuntime {
     await this.memoryManager.saveMessageToTranscript(agentId, 'user', task.description, sessionKey);
     await this.memoryManager.saveMessageToTranscript(agentId, 'assistant', finalResponse, sessionKey);
 
-    // Update context
-    const updatedContext = `${context}\n\nUser: ${task.description}\nAssistant: ${finalResponse}\n`;
-    await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
+    // Update context with memory flush if needed
+    if (sessionKey) {
+      await this.updateSessionContext(agentId, sessionKey, task.description, finalResponse);
+    }
 
     // Reset status
     await this.updateAgentStatus(agentId, 'idle');
@@ -439,7 +594,7 @@ export class AgentRuntime {
   private extractToolCall(text: string): { tool: string; params?: any } | null {
     try {
       let cleanText = text.trim();
-      
+
       // Handle markdown code blocks
       if (cleanText.includes('```')) {
         const matches = cleanText.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -452,7 +607,7 @@ export class AgentRuntime {
       try {
         const parsed = JSON.parse(cleanText);
         if (parsed.tool) return parsed;
-      } catch (e) {}
+      } catch (e) { }
 
       // 2. Regex for JSON inside text
       const jsonRegex = /\{[\s\S]*?"tool"\s*:\s*"[^"]+"[\s\S]*?\}/g;
@@ -464,7 +619,7 @@ export class AgentRuntime {
             const jsonStr = match.replace(/,\s*\}/g, '}').replace(/,\s*\]/g, ']');
             const parsed = JSON.parse(jsonStr);
             if (parsed.tool) return parsed;
-          } catch (e) {}
+          } catch (e) { }
         }
       }
     } catch (error) {
@@ -475,7 +630,7 @@ export class AgentRuntime {
 
   private async buildSystemPrompt(agent: AgentConfig, memory: string, agentId: string): Promise<string> {
     const toolsList = this.toolManager.getEnabledTools(agent.tools?.disabled || []);
-    
+
     // Load SOUL.md for personality
     let soul = '';
     try {
@@ -483,19 +638,21 @@ export class AgentRuntime {
     } catch (error) {
       // SOUL.md is optional
     }
-    
+
     // Load recent activity
     let recentActivity = '';
     try {
       recentActivity = await this.memoryManager.getRecentMemory(agentId, 3);
-    } catch (error) {}
-    
+    } catch (error) { }
+
     // Workspace is the agent's home directory
     const workspace = process.env.AGENT_WORKSPACE || process.cwd();
-    
+
     let prompt = `You are ${agent.name}, an AI agent with full file system access.
 
 ${soul ? `# Your Personality\n${soul}\n` : ''}
+
+${this.skillManager.getSkillsPromptSegment(agent.skills || [])}
 
 # Workspace & File System
 - Your workspace (home): ${workspace}
@@ -598,5 +755,54 @@ Remember: You have full file system access. Use absolute paths when user specifi
     await this.memoryManager.createAgent(config);
     this.agents.set(config.id, config);
     logger.info(`Created agent ${config.id}`);
+  }
+
+  private async updateSessionContext(agentId: string, sessionKey: string, userMessage: string, assistantMessage: string): Promise<void> {
+    const context = await this.memoryManager.loadContext(agentId, sessionKey);
+    let updatedContext = `${context}\n\nUser: ${userMessage}\nAssistant: ${assistantMessage}\n`;
+
+    const tokenCount = estimateTokens(updatedContext);
+    if (tokenCount > CONTEXT_THRESHOLD) {
+      logger.warn(`[Agent ${agentId}] Context threshold exceeded (${tokenCount} > ${CONTEXT_THRESHOLD}). Initiating memory flush...`);
+
+      try {
+        const agent = this.agents.get(agentId);
+        if (!agent) throw new Error('Agent not found');
+
+        const approxHalfLength = Math.floor(updatedContext.length / 2);
+        const splitIndex = updatedContext.indexOf('\\n\\nUser:', approxHalfLength);
+
+        if (splitIndex !== -1) {
+          const oldContext = updatedContext.substring(0, splitIndex);
+          const recentContext = updatedContext.substring(splitIndex);
+
+          const summaryPrompt = `Please summarize the following conversation history. Extract any important facts, decisions, or context that should be remembered.\\n\\nHistory:\\n${oldContext}\\n\\nProvide only the summary, no intro/outro.`;
+
+          const response = await this.llmManager.complete(
+            agent.llm.provider,
+            agent.llm.model,
+            summaryPrompt,
+            { temperature: 0.3, maxTokens: 500 }
+          );
+
+          const summary = response.content.trim();
+          await this.memoryManager.addDailyLog(agentId, `Flushed memory summary: ${summary.slice(0, 100)}...`);
+
+          const headerIdx = oldContext.indexOf('## Session Started');
+          const baseHeader = headerIdx !== -1 ? oldContext.substring(0, headerIdx + 18) : '';
+
+          updatedContext = `${baseHeader}\\n\\n[Previous conversation summary]\\n${summary}\\n\\n--- [Recent Conversation] ---\\n${recentContext}`;
+          logger.info(`[Agent ${agentId}] Memory flushed successfully. Tokens reduced.`);
+        }
+      } catch (err) {
+        logger.error(`[Agent ${agentId}] Failed to flush memory:`, err);
+        const keepLength = CONTEXT_KEEP_RECENT * 3;
+        if (updatedContext.length > keepLength) {
+          updatedContext = "... [Older context truncated due to length limits] ...\\n\\n" + updatedContext.substring(updatedContext.length - keepLength);
+        }
+      }
+    }
+
+    await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
   }
 }

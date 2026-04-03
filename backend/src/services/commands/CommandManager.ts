@@ -1,5 +1,6 @@
 import { AgentConfig } from '../../types/agent.js';
 import { MemoryManager } from '../memory/MemoryManager.js';
+import { ToolManager } from '../tools/ToolManager.js';
 import { logger } from '../../utils/logger.js';
 
 export interface Command {
@@ -17,6 +18,7 @@ export interface CommandContext {
   sessionKey: string; // Added sessionKey
   agent: AgentConfig;
   memoryManager: MemoryManager;
+  toolManager: ToolManager;
 }
 
 export class CommandManager {
@@ -27,6 +29,22 @@ export class CommandManager {
   }
 
   private registerDefaultCommands(): void {
+    // Approve command for dangerous tools
+    this.registerCommand({
+      name: 'approve',
+      description: 'Approve a dangerous action',
+      aliases: ['/approve'],
+      execute: async (args, ctx) => {
+        if (args.length === 0) {
+          return '❌ Please provide the action hash to approve: /approve <hash>';
+        }
+        const hash = args[0];
+
+        ctx.toolManager.approveAction(hash);
+        return `✅ Action approved! The agent will now execute it on its next attempt. You can ask it to proceed.`;
+      },
+    });
+
     // Status commands
     this.registerCommand({
       name: 'status',
@@ -87,7 +105,7 @@ export class CommandManager {
 
         const modelRef = args[0];
         const parts = modelRef.split('/');
-        
+
         if (parts.length < 2) {
           return '❌ Invalid format. Use: `/model <provider>/<model>`';
         }

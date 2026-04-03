@@ -2,14 +2,65 @@ import fs from 'fs/promises';
 import { watch } from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
+import Database from 'better-sqlite3';
 import { AgentConfig } from '../../types/agent.js';
 import { logger } from '../../utils/logger.js';
 
 export class MemoryManager {
   private agentsDir: string;
+  private db: Database.Database;
 
   constructor(agentsDir: string = './agents') {
     this.agentsDir = agentsDir;
+
+    // Auto-create agents dir
+    import('fs').then(fsSync => {
+      if (!fsSync.existsSync(agentsDir)) {
+        fsSync.mkdirSync(agentsDir, { recursive: true });
+      }
+    });
+
+    const dbPath = path.join(agentsDir, 'oym-database.sqlite');
+    this.db = new Database(dbPath);
+    this.initSchema();
+
+    // Run memory compaction / pruning every 24 hours
+    setInterval(() => {
+      this.pruneOldLogs(30);
+    }, 24 * 60 * 60 * 1000);
+
+    // Also run once shortly after startup
+    setTimeout(() => this.pruneOldLogs(30), 10000);
+  }
+
+  private initSchema() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS search_memory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        type TEXT NOT NULL, -- 'fact' or 'daily_log'
+        content TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS transcripts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS cron_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        description TEXT NOT NULL,
+        interval_ms INTEGER NOT NULL,
+        last_run INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
   }
 
   watchAgents(callback: (agentId: string) => void): void {
@@ -57,9 +108,7 @@ export class MemoryManager {
 
   async loadAllAgents(): Promise<AgentConfig[]> {
     try {
-      // Check if agents directory exists
       await fs.access(this.agentsDir);
-      
       const dirs = await fs.readdir(this.agentsDir);
       const agents: AgentConfig[] = [];
       for (const dir of dirs) {
@@ -71,17 +120,12 @@ export class MemoryManager {
             agents.push(agent);
             logger.info(`✅ Loaded agent: ${agent.name} (${agent.id})`);
           } catch (e) {
-            logger.error(`❌ Failed to load agent ${dir}:`, e);
+            // Not an agent folder
           }
         }
       }
       return agents;
     } catch (error: any) {
-      if (error.code === 'ENOENT') {
-        logger.warn(`Agents directory ${this.agentsDir} does not exist`);
-        return [];
-      }
-      logger.error('Failed to read agents directory:', error);
       return [];
     }
   }
@@ -95,9 +139,7 @@ export class MemoryManager {
       parsed.data.updatedAt = new Date().toISOString();
       const updated = (matter as any).stringify(parsed.content, parsed.data);
       await fs.writeFile(agentPath, updated, 'utf-8');
-    } catch (error) {
-      logger.error(`Failed to update status for ${agentId}:`, error);
-    }
+    } catch (error) { }
   }
 
   async addLongTermMemory(agentId: string, fact: string): Promise<void> {
@@ -106,77 +148,58 @@ export class MemoryManager {
       const timestamp = new Date().toISOString().split('T')[0];
       const entry = `\n- [${timestamp}] ${fact}\n`;
       await fs.appendFile(memoryPath, entry, 'utf-8');
-    } catch (error) {}
+
+      // Also write to DB for fast searching
+      this.db.prepare('INSERT INTO search_memory (agent_id, type, content) VALUES (?, ?, ?)').run(agentId, 'fact', fact);
+    } catch (error) { }
   }
 
   async addDailyLog(agentId: string, entry: string): Promise<void> {
     const memoryDir = path.join(this.agentsDir, agentId, 'memory');
     const today = new Date().toISOString().split('T')[0];
     const dailyLogPath = path.join(memoryDir, `${today}.md`);
-    
+
     try {
       await fs.mkdir(memoryDir, { recursive: true });
-      
-      // Check if file exists, if not create with header
       try {
         await fs.access(dailyLogPath);
       } catch {
         const header = `# Daily Log - ${today}\n\n`;
         await fs.writeFile(dailyLogPath, header, 'utf-8');
       }
-      
+
       const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
       const logEntry = `\n[${timestamp}] ${entry}\n`;
       await fs.appendFile(dailyLogPath, logEntry, 'utf-8');
-    } catch (error) {
-      logger.error(`Failed to add daily log for ${agentId}:`, error);
-    }
+
+      // Also write to DB
+      this.db.prepare('INSERT INTO search_memory (agent_id, type, content) VALUES (?, ?, ?)').run(agentId, 'daily_log', `[${today}] ${entry}`);
+    } catch (error) { }
   }
 
   async searchMemory(agentId: string, query: string): Promise<string> {
+    // Advanced SQLite search
     try {
-      const memoryPath = path.join(this.agentsDir, agentId, 'MEMORY.md');
-      const memoryDir = path.join(this.agentsDir, agentId, 'memory');
-      
-      let results: string[] = [];
-      
-      // Search in MEMORY.md
-      try {
-        const memoryContent = await fs.readFile(memoryPath, 'utf-8');
-        const lines = memoryContent.split('\n');
-        const matchingLines = lines.filter(line => 
-          line.toLowerCase().includes(query.toLowerCase())
-        );
-        
-        if (matchingLines.length > 0) {
-          results.push('## From Long-term Memory (MEMORY.md):');
-          results.push(...matchingLines.slice(0, 10));
-        }
-      } catch (error) {}
-      
-      // Search in daily logs
-      try {
-        const files = await fs.readdir(memoryDir);
-        const mdFiles = files.filter(f => f.endsWith('.md')).sort().reverse();
-        
-        for (const file of mdFiles.slice(0, 30)) {
-          const content = await fs.readFile(path.join(memoryDir, file), 'utf-8');
-          const lines = content.split('\n');
-          const matchingLines = lines.filter(line => 
-            line.toLowerCase().includes(query.toLowerCase())
-          );
-          
-          if (matchingLines.length > 0) {
-            results.push(`\n## From ${file}:`);
-            results.push(...matchingLines.slice(0, 5));
-          }
-        }
-      } catch (error) {}
-      
-      if (results.length === 0) {
+      const q = `%${query}%`;
+      const rows = this.db.prepare('SELECT type, content, created_at FROM search_memory WHERE agent_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 20').all(agentId, q) as any[];
+
+      if (rows.length === 0) {
         return `No results found for query: "${query}"`;
       }
-      
+
+      const facts = rows.filter(r => r.type === 'fact');
+      const logs = rows.filter(r => r.type === 'daily_log');
+
+      const results: string[] = [];
+      if (facts.length > 0) {
+        results.push('## From Long-term Memory:');
+        results.push(...facts.map(r => r.content));
+      }
+      if (logs.length > 0) {
+        results.push('\n## From Daily Logs:');
+        results.push(...logs.map(r => `[${r.created_at.split(' ')[0]}] ${r.content}`));
+      }
+
       return results.join('\n');
     } catch (error) {
       return `Error searching memory: ${error}`;
@@ -185,42 +208,15 @@ export class MemoryManager {
 
   async searchSessions(agentId: string, query: string, sessionKey?: string): Promise<string> {
     try {
-      const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
-      const files = await fs.readdir(sessionsDir);
-      
-      // Filter to only transcript files (.jsonl)
-      const transcriptFiles = files
-        .filter(f => f.endsWith('.jsonl'))
-        .sort()
-        .reverse();
-      
-      let results: string[] = [];
-      let filesSearched = 0;
-      
-      for (const file of transcriptFiles.slice(0, 20)) {
-        const content = await fs.readFile(path.join(sessionsDir, file), 'utf-8');
-        const lines = content.trim().split('\n');
-        
-        for (const line of lines) {
-          try {
-            const entry = JSON.parse(line);
-            if (entry.content && entry.content.toLowerCase().includes(query.toLowerCase())) {
-              results.push(`[${entry.timestamp}] ${entry.role}: ${entry.content.slice(0, 200)}...`);
-              
-              if (results.length >= 10) break;
-            }
-          } catch {}
-        }
-        
-        filesSearched++;
-        if (results.length >= 10) break;
-      }
-      
-      if (results.length === 0) {
+      const q = `%${query}%`;
+      const rows = this.db.prepare('SELECT role, content, timestamp FROM transcripts WHERE agent_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT 10').all(agentId, q) as any[];
+
+      if (rows.length === 0) {
         return `No results found in past sessions for: "${query}"`;
       }
-      
-      return `## Found in past conversations (searched ${filesSearched} sessions):\n\n` + results.join('\n\n');
+
+      const results = rows.map(r => `[${r.timestamp}] ${r.role}: ${r.content.substring(0, 200)}...`);
+      return `## Found in past conversations:\n\n` + results.join('\n\n');
     } catch (error) {
       return `Error searching sessions: ${error}`;
     }
@@ -230,33 +226,33 @@ export class MemoryManager {
     try {
       const memoryDir = path.join(this.agentsDir, agentId, 'memory');
       const files = await fs.readdir(memoryDir);
-      
+
       const today = new Date();
       const recentFiles: string[] = [];
-      
+
       for (const file of files) {
         if (!file.endsWith('.md')) continue;
-        
+
         const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})/);
         if (dateMatch) {
           const fileDate = new Date(dateMatch[1]);
           const daysDiff = Math.floor((today.getTime() - fileDate.getTime()) / (1000 * 60 * 60 * 24));
-          
+
           if (daysDiff <= days) {
             recentFiles.push(file);
           }
         }
       }
-      
+
       recentFiles.sort().reverse();
-      
+
       let content = `# Recent Activity (last ${days} days)\n\n`;
-      
+
       for (const file of recentFiles.slice(0, 7)) {
         const fileContent = await fs.readFile(path.join(memoryDir, file), 'utf-8');
         content += `\n## ${file}\n${fileContent}\n`;
       }
-      
+
       return content;
     } catch (error) {
       return '';
@@ -273,7 +269,7 @@ export class MemoryManager {
       parsed.data.skills = newSkills;
       const updated = (matter as any).stringify(parsed.content, parsed.data);
       await fs.writeFile(agentPath, updated, 'utf-8');
-    } catch (error) {}
+    } catch (error) { }
   }
 
   async loadMemory(agentId: string): Promise<string> {
@@ -300,7 +296,6 @@ export class MemoryManager {
     try {
       return await fs.readFile(sessionContextPath, 'utf-8');
     } catch (error) {
-      // Create initial context with agent info
       const initialContext = await this.createInitialContext(agentId);
       await this.updateContext(agentId, initialContext, sessionKey);
       return initialContext;
@@ -309,67 +304,7 @@ export class MemoryManager {
 
   private async createInitialContext(agentId: string): Promise<string> {
     const agent = await this.loadAgent(agentId);
-    const soul = await this.loadSoul(agentId);
-    
-    return `# Session Context
-
-## About Me
-I am ${agent.name}, an AI agent running on ${agent.llm.provider}/${agent.llm.model}.
-
-${soul ? `## My Personality\n${soul}\n` : ''}
-
-## My Skills
-${agent.skills && agent.skills.length > 0 ? agent.skills.map(s => `- ${s}`).join('\n') : '- General assistance\n- Task execution\n- Code analysis'}
-
-## My Tools
-I have access to these tools:
-
-### File System
-- **read_file** - Read contents of any file
-- **write_file** - Create or modify files
-- **list_directory** - See what files are in a folder
-- **get_file_tree** - See project structure
-- **get_working_directory** - Know where I am
-
-### Execution
-- **shell_exec** - Execute terminal commands
-
-### Web & Search
-- **search_web** - Search the internet
-- **scrape_website** - Read full content from websites
-- **search_files** - Find text in project files
-- **search_codebase** - Search code with patterns
-
-### Memory & Learning (IMPORTANT!)
-- **remember_fact** - Save important info to long-term memory (MEMORY.md)
-- **log_daily** - Log today's actions and decisions to daily log
-- **search_memory** - Search through my memory and daily logs
-- **search_sessions** - Search through past conversations
-- **get_recent_activity** - See what happened in recent days
-- **update_skills** - Learn new skills
-
-## How I Work
-1. **Chat Mode**: For greetings and questions, I respond naturally
-2. **Task Mode**: For actual work, I use my tools
-3. **Planner Mode**: For complex tasks (creating projects, apps), I create a detailed plan first
-
-## Memory System
-I maintain two types of memory:
-- **Long-term Memory (MEMORY.md)**: Important facts, preferences, decisions
-- **Daily Logs (memory/YYYY-MM-DD.md)**: Today's actions, context, notes
-
-I automatically log all requests and completions. For important information, I use remember_fact or log_daily tools.
-
-## Session Started
-Ready to help! You can:
-- Ask me about my capabilities
-- Give me a task to complete
-- Chat with me about anything
-- Ask me to remember important information
-
----
-
-`;
+    return `# Session Context\n\n## Session Started\nReady to help!`;
   }
 
   async updateContext(agentId: string, content: string, sessionKey?: string): Promise<void> {
@@ -378,7 +313,7 @@ Ready to help! You can:
     try {
       await fs.mkdir(path.dirname(sessionContextPath), { recursive: true });
       await fs.writeFile(sessionContextPath, content, 'utf-8');
-    } catch (error) {}
+    } catch (error) { }
   }
 
   private getSessionContextPath(agentId: string, sessionKey: string): string {
@@ -395,8 +330,13 @@ Ready to help! You can:
     try {
       await fs.mkdir(sessionsDir, { recursive: true });
       const entry = { timestamp: new Date().toISOString(), role, content };
+
+      // Write to MD file
       await fs.appendFile(transcriptPath, JSON.stringify(entry) + '\n', 'utf-8');
-    } catch (error) {}
+
+      // Write to SQLite DB for fast searching
+      this.db.prepare('INSERT INTO transcripts (session_id, agent_id, role, content) VALUES (?, ?, ?, ?)').run(safeSessionKey, agentId, role, content);
+    } catch (error) { }
   }
 
   async createAgent(config: AgentConfig): Promise<void> {
@@ -406,5 +346,69 @@ Ready to help! You can:
     await fs.mkdir(path.join(agentDir, 'sessions'), { recursive: true });
     const agentMd = (matter as any).stringify(config.personality || '', config);
     await fs.writeFile(path.join(agentDir, 'AGENT.md'), agentMd, 'utf-8');
+  }
+
+  public async pruneOldLogs(days: number = 30): Promise<number> {
+    try {
+      // 1. Delete from SQLite
+      const stmt = this.db.prepare(`
+          DELETE FROM search_memory 
+          WHERE type = 'daily_log' AND created_at < datetime('now', '-' || ? || ' days')
+      `);
+      const info = stmt.run(days.toString());
+      let deletedCount = info.changes;
+
+      // 2. Delete MD files
+      try {
+        const dirs = await fs.readdir(this.agentsDir);
+        for (const dir of dirs) {
+          const memoryDir = path.join(this.agentsDir, dir, 'memory');
+          try {
+            const files = await fs.readdir(memoryDir);
+            for (const file of files) {
+              if (file.endsWith('.md')) {
+                // Determine file age
+                const filePath = path.join(memoryDir, file);
+                const stat = await fs.stat(filePath);
+                if (Date.now() - stat.mtimeMs > days * 24 * 60 * 60 * 1000) {
+                  await fs.unlink(filePath);
+                  deletedCount++;
+                }
+              }
+            }
+          } catch { /* Memory dir might not exist for some agents */ }
+        }
+      } catch { }
+
+      if (deletedCount > 0) {
+        logger.info(`🧹 Compaction: pruned ${deletedCount} daily logs/files older than ${days} days.`);
+      }
+      return deletedCount;
+    } catch (error) {
+      logger.error('Failed to prune old logs:', error);
+      return 0;
+    }
+  }
+
+  public async scheduleCronJob(agentId: string, description: string, intervalMinutes: number): Promise<void> {
+    const stmt = this.db.prepare(`INSERT INTO cron_jobs (agent_id, description, interval_ms, last_run) VALUES (?, ?, ?, ?)`);
+    stmt.run(agentId, description, intervalMinutes * 60 * 1000, 0);
+    logger.info(`⏰ Cron job scheduled for agent ${agentId}: ${description} every ${intervalMinutes}min`);
+  }
+
+  public async getPendingCronJobs(): Promise<any[]> {
+    const nowMs = new Date().getTime();
+    const rows = this.db.prepare(`
+          SELECT id, agent_id, description, interval_ms, last_run 
+          FROM cron_jobs 
+          WHERE (? - last_run) >= interval_ms
+      `).all(nowMs);
+    return rows as any[];
+  }
+
+  public async markCronJobRun(jobId: number): Promise<void> {
+    const nowMs = new Date().getTime();
+    const stmt = this.db.prepare(`UPDATE cron_jobs SET last_run = ? WHERE id = ?`);
+    stmt.run(nowMs, jobId);
   }
 }

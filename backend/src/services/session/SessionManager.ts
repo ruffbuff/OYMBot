@@ -28,6 +28,31 @@ export class SessionManager {
     const baseDir = agentsDir || path.join(process.cwd(), 'agents');
     this.sessionsFile = path.join(baseDir, '.sessions.json');
     this.loadSessionsFromDisk();
+    this.startCleanupJob();
+  }
+
+  private startCleanupJob(): void {
+    // Run session cleanup every hour
+    setInterval(() => {
+      this.cleanupInactiveSessions();
+    }, 60 * 60 * 1000);
+  }
+
+  public cleanupInactiveSessions(maxAgeMs: number = 7 * 24 * 60 * 60 * 1000): void {
+    const now = new Date().getTime();
+    let cleaned = 0;
+
+    for (const [key, session] of this.sessions.entries()) {
+      if (now - session.lastActivity.getTime() > maxAgeMs) {
+        this.sessions.delete(key);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info(`🧹 Cleaned up ${cleaned} inactive sessions.`);
+      this.saveSessionsToDisk();
+    }
   }
 
   private async loadSessionsFromDisk(): Promise<void> {
@@ -36,10 +61,10 @@ export class SessionManager {
       const sessionsData = JSON.parse(data);
       for (const [key, value] of Object.entries(sessionsData)) {
         const s = value as any;
-        this.sessions.set(key, { 
-          ...s, 
-          createdAt: new Date(s.createdAt), 
-          lastActivity: new Date(s.lastActivity) 
+        this.sessions.set(key, {
+          ...s,
+          createdAt: new Date(s.createdAt),
+          lastActivity: new Date(s.lastActivity)
         });
       }
       logger.info(`Loaded ${this.sessions.size} sessions from disk`);
@@ -67,26 +92,26 @@ export class SessionManager {
   static parseSessionKey(key: string): SessionKey | null {
     const parts = key.split(':');
     if (parts.length !== 3) return null;
-    return { 
-      channel: parts[0] as SessionKey['channel'], 
-      userId: parts[1], 
-      agentId: parts[2] 
+    return {
+      channel: parts[0] as SessionKey['channel'],
+      userId: parts[1],
+      agentId: parts[2]
     };
   }
 
   getOrCreateSession(channel: SessionKey['channel'], userId: string, agentId: string): Session {
     const key = SessionManager.generateSessionKey(channel, userId, agentId);
     let session = this.sessions.get(key);
-    
+
     if (!session) {
-      session = { 
-        sessionKey: key, 
-        channel, 
-        userId, 
-        agentId, 
-        createdAt: new Date(), 
-        lastActivity: new Date(), 
-        messageCount: 0 
+      session = {
+        sessionKey: key,
+        channel,
+        userId,
+        agentId,
+        createdAt: new Date(),
+        lastActivity: new Date(),
+        messageCount: 0
       };
       this.sessions.set(key, session);
       this.saveSessionsToDisk();
@@ -94,7 +119,7 @@ export class SessionManager {
     } else {
       session.lastActivity = new Date();
     }
-    
+
     return session;
   }
 

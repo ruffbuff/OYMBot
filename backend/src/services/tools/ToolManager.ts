@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../../utils/logger.js';
 import { MemoryManager } from '../memory/MemoryManager.js';
+import { AgentConfig, ToolPolicy } from '../../types/agent.js';
 
 const execPromise = promisify(exec);
 
@@ -19,6 +20,7 @@ export interface Tool {
 export class ToolManager {
   private tools: Map<string, Tool> = new Map();
   private memoryManager: MemoryManager;
+  private approvedActions: Set<string> = new Set();
 
   constructor(memoryManager: MemoryManager) {
     this.memoryManager = memoryManager;
@@ -41,7 +43,7 @@ export class ToolManager {
           if (!this.isPathAllowed(filePath, config)) {
             return `Error: Access to ${params.path} is denied by sandbox policy.`;
           }
-          
+
           const content = await fs.readFile(filePath, 'utf-8');
           return `File content:\n\n${content}`;
         } catch (error) {
@@ -63,7 +65,7 @@ export class ToolManager {
           if (!this.isPathAllowed(dirPath, config)) {
             return `Error: Access to ${params.path || '.'} is denied by sandbox policy.`;
           }
-          
+
           const items = await fs.readdir(dirPath, { withFileTypes: true });
           const list = items.map((item) => {
             const type = item.isDirectory() ? '[DIR]' : '[FILE]';
@@ -89,7 +91,7 @@ export class ToolManager {
         try {
           const forbiddenFiles = ['AGENT.md', 'MEMORY.md', 'CONTEXT.md', '.env'];
           const filename = path.basename(params.path);
-          
+
           if (forbiddenFiles.includes(filename)) {
             return `Error: Writing directly to ${filename} is forbidden for security. Use 'remember_fact' or 'update_skills' tools instead.`;
           }
@@ -230,10 +232,14 @@ export class ToolManager {
       parameters: {
         command: 'string - command to execute',
       },
-      execute: async (params: { command: string }) => {
+      execute: async (params: { command: string }, agentId?: string, config?: AgentConfig) => {
         try {
           logger.info(`Executing shell command: ${params.command}`);
-          const { stdout, stderr } = await execPromise(params.command);
+          const options: any = {};
+          if (config?.tools?.sandboxRoot) {
+            options.cwd = path.resolve(config.tools.sandboxRoot);
+          }
+          const { stdout, stderr } = await execPromise(params.command, options);
           let result = '';
           if (stdout) result += `STDOUT:\n${stdout}\n`;
           if (stderr) result += `STDERR:\n${stderr}\n`;
@@ -281,11 +287,11 @@ export class ToolManager {
         try {
           const sandbox = config?.tools?.sandboxRoot || process.cwd();
           let command = `grep -rni "${params.pattern}" ${sandbox} --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next --exclude-dir=dist --max-count=30`;
-          
+
           if (params.filePattern) {
             command += ` --include="${params.filePattern}"`;
           }
-          
+
           const { stdout } = await execPromise(command);
           return stdout || `No matches found for pattern "${params.pattern}"`;
         } catch (error: any) {
@@ -313,7 +319,7 @@ export class ToolManager {
             return `Error: Access to ${params.path || '.'} is denied by sandbox policy.`;
           }
           const maxDepth = params.maxDepth || 3;
-          
+
           // Use tree command if available, otherwise use find
           try {
             const { stdout } = await execPromise(`tree -L ${maxDepth} -I 'node_modules|.git|.next|dist' ${dirPath}`);
@@ -341,14 +347,14 @@ export class ToolManager {
         try {
           if (!params.url.startsWith('http')) return 'Error: Invalid URL';
           logger.info(`Scraping website: ${params.url}`);
-          
+
           const response = await fetch(params.url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
           });
-          
+
           if (!response.ok) return `Error: HTTP ${response.status}`;
           const html = await response.text();
-          
+
           // Better extraction: remove scripts, styles, and junk
           const text = html
             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -358,7 +364,7 @@ export class ToolManager {
             .replace(/<[^>]+>/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
-            
+
           return `Content from ${params.url} (first 8000 chars):\n\n${text.slice(0, 8000)}...`;
         } catch (error: any) {
           return `Scrape error: ${error.message}`;
@@ -386,14 +392,14 @@ export class ToolManager {
       execute: async (params: { query: string }) => {
         try {
           const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(params.query)}`;
-          const response = await fetch(url, { 
-            headers: { 
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
-            } 
+          const response = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
           });
           if (!response.ok) return 'Error reaching search engine';
           const html = await response.text();
-          
+
           // More robust regex for DDG HTML
           const results: string[] = [];
           const resultRegex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
@@ -433,7 +439,7 @@ export class ToolManager {
 
   private resolvePath(filePath: string, config?: AgentConfig): string {
     let resolvedPath = filePath;
-    
+
     // Expand ~ to home directory
     if (resolvedPath.startsWith('~/')) {
       const homeDir = process.env.HOME || process.env.USERPROFILE || '';
@@ -443,16 +449,16 @@ export class ToolManager {
       const base = config?.tools?.sandboxRoot || process.cwd();
       resolvedPath = path.resolve(base, resolvedPath);
     }
-    
+
     return resolvedPath;
   }
 
   private isPathAllowed(filePath: string, config?: AgentConfig): boolean {
     if (!config?.tools?.sandboxRoot) return true; // No sandbox restricted
-    
+
     const sandboxRoot = path.resolve(config.tools.sandboxRoot);
     const absolutePath = path.resolve(filePath);
-    
+
     return absolutePath.startsWith(sandboxRoot);
   }
 
@@ -462,9 +468,9 @@ export class ToolManager {
 
     // Check specific tool policy
     const policies = agent.tools?.policies || [];
-    
+
     // 1. Check direct tool policy
-    const toolPolicy = policies.find(p => p.name === toolName);
+    const toolPolicy = policies.find((p: ToolPolicy) => p.name === toolName);
     if (toolPolicy) {
       if (toolPolicy.action === 'deny') return { allowed: false, reason: `Policy: tool "${toolName}" is denied`, action: 'deny' };
       if (toolPolicy.action === 'ask') return { allowed: true, action: 'ask' };
@@ -472,7 +478,7 @@ export class ToolManager {
     }
 
     // 2. Check group policy
-    const groupPolicy = policies.find(p => p.name === `group:${tool.group}`);
+    const groupPolicy = policies.find((p: ToolPolicy) => p.name === `group:${tool.group}`);
     if (groupPolicy) {
       if (groupPolicy.action === 'deny') return { allowed: false, reason: `Policy: group "${tool.group}" is denied`, action: 'deny' };
       if (groupPolicy.action === 'ask') return { allowed: true, action: 'ask' };
@@ -490,6 +496,19 @@ export class ToolManager {
     }
 
     return { allowed: true, action: 'allow' };
+  }
+
+  public approveAction(hash: string): void {
+    this.approvedActions.add(hash);
+    logger.info(`Action ${hash} approved by user.`);
+
+    // 5 minutes TTL to prevent memory leaks with unused hashes
+    setTimeout(() => {
+      if (this.approvedActions.has(hash)) {
+        this.approvedActions.delete(hash);
+        logger.info(`Action approval ${hash} expired.`);
+      }
+    }, 5 * 60 * 1000);
   }
 
   registerTool(tool: Tool): void {
@@ -525,14 +544,28 @@ export class ToolManager {
         return `Security Error: ${policy.reason}`;
       }
       if (policy.action === 'ask') {
-        return `SECURITY: Tool "${name}" requires manual confirmation. Please ask the user for permission to execute this specific command: ${JSON.stringify(params)}`;
+        const actionPayload = JSON.stringify({ name, params, agentId: config.id });
+        const hash = Buffer.from(actionPayload).toString('base64');
+
+        if (this.approvedActions.has(hash)) {
+          this.approvedActions.delete(hash); // Consume approval
+        } else {
+          return `SECURITY: Tool "${name}" is dangerous and requires manual confirmation. Pause your task, explain what you are about to do, and ask the user to type: /approve ${hash}`;
+        }
       }
     }
 
     try {
-      return await tool.execute(params, agentId, config);
-    } catch (error) {
-      return `Error executing tool: ${error}`;
+      const timeoutPromise = new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('Tool execution timed out after 60 seconds.')), 60000)
+      );
+
+      return await Promise.race([
+        tool.execute(params, agentId, config),
+        timeoutPromise
+      ]);
+    } catch (error: any) {
+      return `Error executing tool: ${error.message || error}`;
     }
   }
 }

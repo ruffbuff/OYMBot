@@ -60,6 +60,21 @@ export class GatewayServer {
       });
     };
 
+    // Live sync frontend when new subagents are spawned or configurations change
+    this.agentRuntime.onAgentStateChange = () => {
+      this.io.emit('agents:list', {
+        agents: this.agentRuntime.getAllAgents().map((agent) => ({
+          id: agent.id,
+          name: agent.name,
+          type: agent.type,
+          status: agent.status,
+          energy: agent.energy,
+          llm: agent.llm,
+          position: { x: 0, y: 0 },
+        })),
+      });
+    };
+
     this.setupMiddleware();
     this.setupRoutes();
     this.setupWebSocket();

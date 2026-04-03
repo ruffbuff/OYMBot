@@ -155,7 +155,7 @@ class BlessedTUI {
         return;
       }
 
-      this.logMessage(`{blue-fg}{bold}You:{/bold}{/blue-fg} ${this.wrapText(text, this.screen.width - 8)}`);
+      this.logMessage(`{blue-fg}{bold}You:{/bold}{/blue-fg} ${this.wrapText(text, (this.screen.width as number) - 8)}`);
       this.socket.emit('task:create', {
         agentId: this.currentAgent.id,
         description: text,
@@ -250,7 +250,7 @@ class BlessedTUI {
           this.logMessage(`  {yellow-fg}⚙️ Step ${data.step}: Using tool "${data.tool}"{/yellow-fg}`);
           if (data.params) {
             const paramsStr = JSON.stringify(data.params);
-            const maxWidth = this.screen.width - 8; // Account for borders and padding
+            const maxWidth = (this.screen.width as number) - 8; // Account for borders and padding
             const truncatedParams = paramsStr.length > maxWidth ? 
               paramsStr.slice(0, maxWidth - 3) + '...' : paramsStr;
             this.logMessage(`    {gray-fg}Params: ${truncatedParams}{/gray-fg}`);
@@ -259,7 +259,7 @@ class BlessedTUI {
         // Remove thought display here - we'll only show the final result
         
         if (data.result) {
-          const maxWidth = this.screen.width - 8;
+          const maxWidth = (this.screen.width as number) - 8;
           const cleanResult = data.result.replace(/\n/g, ' ').trim();
           const truncatedResult = cleanResult.length > maxWidth ? 
             cleanResult.slice(0, maxWidth - 3) + '...' : cleanResult;
@@ -269,7 +269,7 @@ class BlessedTUI {
     });
 
     this.socket.on('task:result', (data: { result: string }) => {
-      const maxWidth = this.screen.width - 8; // Account for borders and padding
+      const maxWidth = (this.screen.width as number) - 8; // Account for borders and padding
       const agentPrefix = `🤖 ${this.currentAgent?.name || 'Agent'}: `;
       const prefixLength = agentPrefix.length;
       

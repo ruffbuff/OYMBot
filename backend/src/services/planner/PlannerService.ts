@@ -14,33 +14,39 @@ export class PlannerService {
    * Create a plan for a complex task
    * This is the "Architect" phase
    */
-  async createPlan(agent: AgentConfig, taskDescription: string): Promise<AgentPlan> {
+  async createPlan(agent: AgentConfig, taskDescription: string, retries = 2): Promise<AgentPlan> {
     logger.info(`🏗️ Creating plan for task: ${taskDescription}`);
 
     const architectPrompt = this.buildArchitectPrompt(taskDescription);
 
-    try {
-      const response = await this.llmManager.complete(
-        agent.llm.provider,
-        agent.llm.model,
-        architectPrompt,
-        {
-          systemPrompt: this.getArchitectSystemPrompt(),
-          temperature: 0.3, // Lower temperature for more deterministic planning
-          maxTokens: 4000,
-        }
-      );
+    for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      try {
+        const response = await this.llmManager.complete(
+          agent.llm.provider,
+          agent.llm.model,
+          architectPrompt,
+          {
+            systemPrompt: this.getArchitectSystemPrompt(),
+            temperature: 0.3, // Lower temperature for more deterministic planning
+            maxTokens: 4000,
+          }
+        );
 
-      // Parse the plan from LLM response
-      const plan = this.parsePlanFromResponse(response.content, taskDescription);
-      
-      logger.info(`✅ Plan created with ${plan.steps.length} steps`);
-      
-      return plan;
-    } catch (error) {
-      logger.error('Failed to create plan:', error);
-      throw new Error(`Plan creation failed: ${error}`);
+        // Parse the plan from LLM response
+        const plan = this.parsePlanFromResponse(response.content, taskDescription);
+
+        logger.info(`✅ Plan created with ${plan.steps.length} steps`);
+
+        return plan;
+      } catch (error) {
+        logger.warn(`Plan creation attempt ${attempt} failed:`, error);
+        if (attempt > retries) {
+          logger.error('Failed to create plan after max retries.');
+          throw new Error(`Plan creation failed: ${error}`);
+        }
+      }
     }
+    throw new Error('Plan creation failed');
   }
 
   /**
@@ -49,46 +55,53 @@ export class PlannerService {
   async refactorPlan(
     agent: AgentConfig,
     currentPlan: AgentPlan,
-    executionContext: string
+    executionContext: string,
+    retries = 2
   ): Promise<AgentPlan> {
     logger.info(`🔄 Refactoring plan from step ${currentPlan.currentStepIndex}`);
 
     const refactorPrompt = this.buildRefactorPrompt(currentPlan, executionContext);
 
-    try {
-      const response = await this.llmManager.complete(
-        agent.llm.provider,
-        agent.llm.model,
-        refactorPrompt,
-        {
-          systemPrompt: this.getArchitectSystemPrompt(),
-          temperature: 0.3,
-          maxTokens: 4000,
+    for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      try {
+        const response = await this.llmManager.complete(
+          agent.llm.provider,
+          agent.llm.model,
+          refactorPrompt,
+          {
+            systemPrompt: this.getArchitectSystemPrompt(),
+            temperature: 0.3,
+            maxTokens: 4000,
+          }
+        );
+
+        // Parse new steps
+        const newSteps = this.parseStepsFromResponse(response.content);
+
+        // Keep completed steps, replace remaining with new plan
+        const updatedSteps = [
+          ...currentPlan.steps.slice(0, currentPlan.currentStepIndex),
+          ...newSteps,
+        ];
+
+        const updatedPlan: AgentPlan = {
+          ...currentPlan,
+          steps: updatedSteps,
+          updatedAt: new Date(),
+        };
+
+        logger.info(`✅ Plan refactored: ${updatedSteps.length} total steps`);
+
+        return updatedPlan;
+      } catch (error) {
+        logger.warn(`Plan refactoring attempt ${attempt} failed:`, error);
+        if (attempt > retries) {
+          logger.error('Failed to refactor plan after max retries.');
+          throw new Error(`Plan refactoring failed: ${error}`);
         }
-      );
-
-      // Parse new steps
-      const newSteps = this.parseStepsFromResponse(response.content);
-      
-      // Keep completed steps, replace remaining with new plan
-      const updatedSteps = [
-        ...currentPlan.steps.slice(0, currentPlan.currentStepIndex),
-        ...newSteps,
-      ];
-
-      const updatedPlan: AgentPlan = {
-        ...currentPlan,
-        steps: updatedSteps,
-        updatedAt: new Date(),
-      };
-
-      logger.info(`✅ Plan refactored: ${updatedSteps.length} total steps`);
-
-      return updatedPlan;
-    } catch (error) {
-      logger.error('Failed to refactor plan:', error);
-      throw new Error(`Plan refactoring failed: ${error}`);
+      }
     }
+    throw new Error('Plan refactoring failed');
   }
 
   /**
@@ -96,7 +109,7 @@ export class PlannerService {
    */
   private getArchitectSystemPrompt(): string {
     const workspace = process.env.AGENT_WORKSPACE || process.cwd();
-    
+
     return `You are an AI Architect specialized in breaking down complex tasks into executable steps.
 
 # File System Access
@@ -202,7 +215,7 @@ Output ONLY the JSON array of new steps (starting from id ${currentPlan.currentS
     try {
       // Extract JSON from response (handle markdown code blocks)
       let jsonStr = response.trim();
-      
+
       // Remove markdown code blocks if present
       if (jsonStr.startsWith('```')) {
         jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
@@ -242,7 +255,7 @@ Output ONLY the JSON array of new steps (starting from id ${currentPlan.currentS
   private parseStepsFromResponse(response: string): AgentStep[] {
     try {
       let jsonStr = response.trim();
-      
+
       if (jsonStr.startsWith('```')) {
         jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
       }
@@ -294,21 +307,21 @@ Output ONLY the JSON array of new steps (starting from id ${currentPlan.currentS
     ];
 
     const lowerDesc = description.toLowerCase();
-    
+
     // Check for complex keywords
     const hasComplexKeyword = complexKeywords.some(keyword => lowerDesc.includes(keyword));
-    
+
     // Check for file creation patterns
     const hasFileCreation = /файл|file|html|css|js|py|java|cpp/.test(lowerDesc);
-    
+
     // If it's a creation task with file operations, use planner
     if (hasComplexKeyword && hasFileCreation) {
       return true;
     }
-    
+
     // Check for multiple actions (and, then, also, etc.)
     const hasMultipleActions = /\band\b|\bthen\b|\balso\b|\bafter\b|\bи\b|\bпотом\b|\bтакже\b/.test(lowerDesc);
-    
+
     return hasComplexKeyword && hasMultipleActions;
   }
 }

@@ -28,7 +28,7 @@ class WebSocketClient {
       console.log('WebSocket disconnected');
     });
 
-    this.socket.on('connect_error', (error) => {
+    this.socket.on('connect_error', (error: any) => {
       console.error('WebSocket connection error:', error);
     });
 
