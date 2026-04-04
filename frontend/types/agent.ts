@@ -10,3 +10,14 @@ export interface Agent {
   currentTask?: string;
   position: { x: number; y: number };
 }
+
+export interface AgentStep {
+  agentId: string;
+  step: number;
+  thought?: string;
+  tool?: string;
+  params?: Record<string, unknown>;
+  result?: string;
+  planProgress?: string;
+  timestamp: string;
+}

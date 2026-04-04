@@ -1,6 +1,6 @@
 export type AgentStatus = 'idle' | 'thinking' | 'working' | 'error' | 'offline';
 export type AgentType = 'api-assistant' | 'autonomous-agent';
-export type LLMProvider = 'openai' | 'ollama' | 'anthropic' | 'openrouter';
+export type LLMProvider = 'openai' | 'ollama' | 'ollama-cloud' | 'anthropic' | 'openrouter';
 
 export interface ToolPolicy {
   name: string; // tool name or group name (group:fs, group:shell)

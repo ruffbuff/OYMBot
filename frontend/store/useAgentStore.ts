@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Agent, AgentStatus } from '@/types/agent';
+import { Agent, AgentStatus, AgentStep } from '@/types/agent';
 import { wsClient } from '@/lib/websocket';
 
 interface Session {
@@ -19,6 +19,8 @@ interface AgentStore {
   systemStatus: 'normal' | 'high-load' | 'error';
   panicMode: boolean;
   connected: boolean;
+  // Live steps per agent (cleared on task:result)
+  agentSteps: Record<string, AgentStep[]>;
   
   // Actions
   setAgents: (agents: Agent[]) => void;
@@ -30,6 +32,8 @@ interface AgentStore {
   setSystemStatus: (status: 'normal' | 'high-load' | 'error') => void;
   setPanicMode: (panic: boolean) => void;
   setConnected: (connected: boolean) => void;
+  addAgentStep: (step: AgentStep) => void;
+  clearAgentSteps: (agentId: string) => void;
   
   // WebSocket actions
   connectWebSocket: () => void;
@@ -50,6 +54,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   systemStatus: 'normal',
   panicMode: false,
   connected: false,
+  agentSteps: {},
 
   setAgents: (agents) => set({ agents }),
 
@@ -78,6 +83,19 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   setPanicMode: (panic) => set({ panicMode: panic }),
 
   setConnected: (connected) => set({ connected }),
+
+  addAgentStep: (step) =>
+    set((state) => ({
+      agentSteps: {
+        ...state.agentSteps,
+        [step.agentId]: [...(state.agentSteps[step.agentId] || []), step],
+      },
+    })),
+
+  clearAgentSteps: (agentId) =>
+    set((state) => ({
+      agentSteps: { ...state.agentSteps, [agentId]: [] },
+    })),
 
   connectWebSocket: () => {
     const socket = wsClient.connect();
@@ -111,6 +129,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     // Task result
     socket.on('task:result', (data: { agentId: string; sessionKey: string; result: string }) => {
       console.log('Task result:', data);
+      get().clearAgentSteps(data.agentId);
       // Emit event for chat component
       window.dispatchEvent(new CustomEvent('agent-response', { 
         detail: { agentId: data.agentId, sessionKey: data.sessionKey, message: data.result } 
@@ -120,7 +139,15 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     // Task error
     socket.on('task:error', (data: { agentId: string; error: string }) => {
       console.error('Task error:', data);
+      get().clearAgentSteps(data.agentId);
       get().setAgentStatus(data.agentId, 'error');
+    });
+
+    // Agent step (real-time thoughts/tool calls)
+    socket.on('agent:step', (data: AgentStep) => {
+      get().addAgentStep(data);
+      // Also update agent status to 'working' while steps are coming in
+      get().setAgentStatus(data.agentId, 'working');
     });
   },
 

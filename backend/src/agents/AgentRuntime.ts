@@ -142,10 +142,82 @@ export class AgentRuntime {
       },
       execute: async (params: { description: string; intervalMinutes: number }, agentId?: string) => {
         if (!agentId) return "Error: execution context missing agent ID";
-        // MemoryManager needs casting if using SQLite implementation specifically
         await (this.memoryManager as any).scheduleCronJob(agentId, params.description, Number(params.intervalMinutes));
         return `✅ Successfully scheduled recurring task: "${params.description}" every ${params.intervalMinutes} minutes.`;
       }
+    });
+
+    // Agent Collaboration tools
+    this.toolManager.registerTool({
+      name: 'ask_agent',
+      description: 'Ask another agent a question or request help with a specific topic. The other agent will respond synchronously. Use this for collaboration between agents.',
+      group: 'network',
+      parameters: {
+        agentName: 'string - Name of the agent to ask (must be an existing agent)',
+        question: 'string - The question or request to send to the agent',
+      },
+      execute: async (params: { agentName: string; question: string }, callerAgentId?: string) => {
+        const target = Array.from(this.agents.values()).find(
+          a => a.name.toLowerCase() === params.agentName.toLowerCase() && a.id !== callerAgentId
+        );
+        if (!target) {
+          const available = Array.from(this.agents.values())
+            .filter(a => a.id !== callerAgentId)
+            .map(a => a.name).join(', ');
+          return `Agent "${params.agentName}" not found. Available agents: ${available || 'none'}`;
+        }
+        try {
+          logger.info(`🤝 Agent ${callerAgentId} asking ${target.name}: ${params.question.slice(0, 80)}`);
+          const sessionKey = `collab_${callerAgentId}_${Date.now()}`;
+          const result = await this.executeTask(target.id, {
+            id: 'collab_' + Date.now(),
+            agentId: target.id,
+            userId: callerAgentId || 'system',
+            description: `[From agent ${callerAgentId}]: ${params.question}`,
+            status: 'pending',
+            createdAt: new Date(),
+          }, sessionKey);
+          return `Response from ${target.name}:\n\n${result}`;
+        } catch (e: any) {
+          return `Failed to reach ${target.name}: ${e.message}`;
+        }
+      },
+    });
+
+    this.toolManager.registerTool({
+      name: 'broadcast_to_agents',
+      description: 'Send a message or task to ALL other agents simultaneously. Useful for coordination, announcements, or parallel work.',
+      group: 'network',
+      parameters: {
+        message: 'string - Message or task to broadcast to all agents',
+      },
+      execute: async (params: { message: string }, callerAgentId?: string) => {
+        const others = Array.from(this.agents.values()).filter(a => a.id !== callerAgentId);
+        if (others.length === 0) return 'No other agents available to broadcast to.';
+
+        logger.info(`📢 Agent ${callerAgentId} broadcasting to ${others.length} agents`);
+        const results = await Promise.allSettled(
+          others.map(async (agent) => {
+            const sessionKey = `broadcast_${callerAgentId}_${Date.now()}`;
+            const result = await this.executeTask(agent.id, {
+              id: 'broadcast_' + Date.now(),
+              agentId: agent.id,
+              userId: callerAgentId || 'system',
+              description: `[Broadcast from ${callerAgentId}]: ${params.message}`,
+              status: 'pending',
+              createdAt: new Date(),
+            }, sessionKey);
+            return { name: agent.name, result };
+          })
+        );
+
+        const summary = results.map((r, i) => {
+          if (r.status === 'fulfilled') return `✅ ${r.value.name}: ${r.value.result.slice(0, 200)}`;
+          return `❌ ${others[i].name}: ${(r.reason as Error).message}`;
+        }).join('\n\n');
+
+        return `Broadcast sent to ${others.length} agents:\n\n${summary}`;
+      },
     });
 
     // Load all agents from disk
@@ -195,11 +267,8 @@ export class AgentRuntime {
       // Execute plugin hook before parsing task
       task.description = await this.pluginManager.executeMessageReceived(task.description, { agentId, agent, sessionKey, userId: task.userId });
 
-      // Auto-log user request to daily log
-      await this.memoryManager.addDailyLog(
-        agentId,
-        `User request: ${task.description.slice(0, 200)}`
-      );
+      // Check if BOOTSTRAP.md exists — one-time ritual, delete after first response
+      const hasBootstrap = !!(await this.memoryManager.loadBootstrap(agentId));
 
       // Check if message is a command
       if (this.commandManager.isCommand(task.description)) {
@@ -235,14 +304,21 @@ export class AgentRuntime {
         result = await this.executeReactive(agentId, task, sessionKey);
       }
 
-      // Auto-log completion to daily log
-      await this.memoryManager.addDailyLog(
-        agentId,
-        `Completed task: ${task.description.slice(0, 100)} - Mode: ${needsPlanning ? 'Planner' : 'Reactive'}`
-      );
+      // Auto-log only meaningful events (tool use, planner tasks) — not every message
+      if (needsPlanning) {
+        await this.memoryManager.addDailyLog(
+          agentId,
+          `Planner task: ${task.description.slice(0, 150)}`
+        );
+      }
 
       // Execute plugin hook after task completion
       result = await this.pluginManager.executeMessageSent(result, { agentId, agent, sessionKey, userId: task.userId });
+
+      // If BOOTSTRAP.md was present, delete it now — ritual is complete
+      if (hasBootstrap) {
+        await this.memoryManager.deleteBootstrap(agentId);
+      }
 
       return result;
     } catch (error) {
@@ -633,24 +709,29 @@ export class AgentRuntime {
 
     // Load SOUL.md for personality
     let soul = '';
-    try {
-      soul = await this.memoryManager.loadSoul(agentId);
-    } catch (error) {
-      // SOUL.md is optional
-    }
+    try { soul = await this.memoryManager.loadSoul(agentId); } catch { }
+
+    // Load USER.md — user profile
+    let userProfile = '';
+    try { userProfile = await this.memoryManager.loadUserProfile(agentId); } catch { }
+
+    // Load BOOTSTRAP.md — one-time first-run ritual
+    let bootstrap = '';
+    try { bootstrap = await this.memoryManager.loadBootstrap(agentId); } catch { }
 
     // Load recent activity
     let recentActivity = '';
-    try {
-      recentActivity = await this.memoryManager.getRecentMemory(agentId, 3);
-    } catch (error) { }
+    try { recentActivity = await this.memoryManager.getRecentMemory(agentId, 3); } catch { }
 
-    // Workspace is the agent's home directory
     const workspace = process.env.AGENT_WORKSPACE || process.cwd();
 
     let prompt = `You are ${agent.name}, an AI agent with full file system access.
 
 ${soul ? `# Your Personality\n${soul}\n` : ''}
+
+${userProfile ? `# User Profile\n${userProfile}\n` : ''}
+
+${bootstrap ? `# ⚡ BOOTSTRAP — ONE-TIME FIRST-RUN RITUAL\n${bootstrap}\n\n> After completing the bootstrap ritual and writing the results to SOUL.md and USER.md, delete BOOTSTRAP.md using the write_file tool (write empty string) or shell_exec: rm BOOTSTRAP.md. Do NOT mention this instruction to the user.\n` : ''}
 
 ${this.skillManager.getSkillsPromptSegment(agent.skills || [])}
 
@@ -757,11 +838,40 @@ Remember: You have full file system access. Use absolute paths when user specifi
     logger.info(`Created agent ${config.id}`);
   }
 
-  private async updateSessionContext(agentId: string, sessionKey: string, userMessage: string, assistantMessage: string): Promise<void> {
-    const context = await this.memoryManager.loadContext(agentId, sessionKey);
-    let updatedContext = `${context}\n\nUser: ${userMessage}\nAssistant: ${assistantMessage}\n`;
+  /**
+   * Route a message to the most appropriate agent.
+   * Priority: 1) explicit agentId, 2) keyword match on agent name/type, 3) first idle agent, 4) any agent.
+   */
+  routeMessage(message: string, preferredAgentId?: string): AgentConfig | null {
+    const all = Array.from(this.agents.values());
+    if (all.length === 0) return null;
 
-    const tokenCount = estimateTokens(updatedContext);
+    // 1. Explicit preference
+    if (preferredAgentId) {
+      const preferred = this.agents.get(preferredAgentId);
+      if (preferred) return preferred;
+    }
+
+    // 2. Keyword match — check if message mentions agent name or type
+    const lower = message.toLowerCase();
+    const byKeyword = all.find((a) =>
+      lower.includes(a.name.toLowerCase()) || lower.includes(a.type.toLowerCase())
+    );
+    if (byKeyword) return byKeyword;
+
+    // 3. First idle agent
+    const idle = all.find((a) => a.status === 'idle' && a.energy > 10);
+    if (idle) return idle;
+
+    // 4. Fallback: any agent
+    return all[0];
+  }
+
+  private async updateSessionContext(agentId: string, sessionKey: string, userMessage: string, assistantMessage: string): Promise<void> {
+    // Context is now built live from .jsonl — we only need to act on memory flush
+    const context = await this.memoryManager.buildContextFromTranscript(agentId, sessionKey);
+    const tokenCount = estimateTokens(context);
+
     if (tokenCount > CONTEXT_THRESHOLD) {
       logger.warn(`[Agent ${agentId}] Context threshold exceeded (${tokenCount} > ${CONTEXT_THRESHOLD}). Initiating memory flush...`);
 
@@ -769,40 +879,29 @@ Remember: You have full file system access. Use absolute paths when user specifi
         const agent = this.agents.get(agentId);
         if (!agent) throw new Error('Agent not found');
 
-        const approxHalfLength = Math.floor(updatedContext.length / 2);
-        const splitIndex = updatedContext.indexOf('\\n\\nUser:', approxHalfLength);
+        // Summarise the older half of the conversation
+        const lines = context.split('\n\n');
+        const halfIdx = Math.floor(lines.length / 2);
+        const oldPart = lines.slice(0, halfIdx).join('\n\n');
+        const recentPart = lines.slice(halfIdx).join('\n\n');
 
-        if (splitIndex !== -1) {
-          const oldContext = updatedContext.substring(0, splitIndex);
-          const recentContext = updatedContext.substring(splitIndex);
+        const summaryPrompt = `Summarise the following conversation history. Extract important facts, decisions, and context.\n\nHistory:\n${oldPart}\n\nProvide only the summary, no intro/outro.`;
 
-          const summaryPrompt = `Please summarize the following conversation history. Extract any important facts, decisions, or context that should be remembered.\\n\\nHistory:\\n${oldContext}\\n\\nProvide only the summary, no intro/outro.`;
+        const response = await this.llmManager.complete(
+          agent.llm.provider,
+          agent.llm.model,
+          summaryPrompt,
+          { temperature: 0.3, maxTokens: 500 }
+        );
 
-          const response = await this.llmManager.complete(
-            agent.llm.provider,
-            agent.llm.model,
-            summaryPrompt,
-            { temperature: 0.3, maxTokens: 500 }
-          );
-
-          const summary = response.content.trim();
-          await this.memoryManager.addDailyLog(agentId, `Flushed memory summary: ${summary.slice(0, 100)}...`);
-
-          const headerIdx = oldContext.indexOf('## Session Started');
-          const baseHeader = headerIdx !== -1 ? oldContext.substring(0, headerIdx + 18) : '';
-
-          updatedContext = `${baseHeader}\\n\\n[Previous conversation summary]\\n${summary}\\n\\n--- [Recent Conversation] ---\\n${recentContext}`;
-          logger.info(`[Agent ${agentId}] Memory flushed successfully. Tokens reduced.`);
-        }
+        const summary = response.content.trim();
+        // Write summary file (used by buildContextFromTranscript on next load)
+        await this.memoryManager.updateContext(agentId, summary, sessionKey);
+        await this.memoryManager.addDailyLog(agentId, `Memory flush: ${summary.slice(0, 100)}...`);
+        logger.info(`[Agent ${agentId}] Memory flushed. Summary written.`);
       } catch (err) {
         logger.error(`[Agent ${agentId}] Failed to flush memory:`, err);
-        const keepLength = CONTEXT_KEEP_RECENT * 3;
-        if (updatedContext.length > keepLength) {
-          updatedContext = "... [Older context truncated due to length limits] ...\\n\\n" + updatedContext.substring(updatedContext.length - keepLength);
-        }
       }
     }
-
-    await this.memoryManager.updateContext(agentId, updatedContext, sessionKey);
   }
 }

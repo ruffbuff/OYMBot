@@ -11,6 +11,7 @@ import { LLMManager } from '../services/llm/LLMManager.js';
 import { AgentRuntime } from '../agents/AgentRuntime.js';
 import { SessionManager } from '../services/session/SessionManager.js';
 import { TelegramBotService } from '../services/telegram/TelegramBot.js';
+import { buildControlUiHtml } from './controlUi.js';
 
 interface ServerConfig {
   port: number;
@@ -95,6 +96,12 @@ export class GatewayServer {
   }
 
   private setupRoutes(): void {
+    // Control UI — served at root
+    this.app.get('/', (_req, res) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(buildControlUiHtml(this.config.port));
+    });
+
     // Health check
     this.app.get('/health', (_req, res) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -131,6 +138,73 @@ export class GatewayServer {
       } catch (error) {
         logger.error('Failed to create agent:', error);
         res.status(500).json({ error: 'Failed to create agent' });
+      }
+    });
+
+    // Route a message to the best available agent
+    this.app.post('/api/route', async (req, res) => {
+      try {
+        const { message, preferredAgentId, channel = 'web', userId = 'api-user' } = req.body;
+        if (!message) return res.status(400).json({ error: 'message is required' });
+
+        const agent = this.agentRuntime.routeMessage(message, preferredAgentId);
+        if (!agent) return res.status(503).json({ error: 'No agents available' });
+
+        const session = this.sessionManager.getOrCreateSession(channel, userId, agent.id);
+
+        const result = await this.agentRuntime.executeTask(agent.id, {
+          id: Date.now().toString(),
+          agentId: agent.id,
+          userId,
+          description: message,
+          status: 'pending',
+          createdAt: new Date(),
+        }, session.sessionKey);
+
+        this.sessionManager.updateSessionActivity(session.sessionKey);
+        res.json({ agentId: agent.id, agentName: agent.name, sessionKey: session.sessionKey, result });
+      } catch (error) {
+        logger.error('Route failed:', error);
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Routing failed' });
+      }
+    });
+
+    // --- Cron Jobs ---
+    // List all cron jobs
+    this.app.get('/api/cron', async (_req, res) => {
+      try {
+        const jobs = await (this.memoryManager as any).getAllCronJobs();
+        res.json({ jobs });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch cron jobs' });
+      }
+    });
+
+    // Create a cron job
+    this.app.post('/api/cron', async (req, res) => {
+      try {
+        const { agentId, description, intervalMinutes } = req.body;
+        if (!agentId || !description || !intervalMinutes) {
+          return res.status(400).json({ error: 'agentId, description, intervalMinutes are required' });
+        }
+        if (!this.agentRuntime.getAgent(agentId)) {
+          return res.status(404).json({ error: 'Agent not found' });
+        }
+        await this.memoryManager.scheduleCronJob(agentId, description, intervalMinutes);
+        res.json({ success: true });
+      } catch (error) {
+        logger.error('Failed to create cron job:', error);
+        res.status(500).json({ error: 'Failed to create cron job' });
+      }
+    });
+
+    // Delete a cron job
+    this.app.delete('/api/cron/:id', async (req, res) => {
+      try {
+        await (this.memoryManager as any).deleteCronJob(parseInt(req.params.id, 10));
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to delete cron job' });
       }
     });
   }

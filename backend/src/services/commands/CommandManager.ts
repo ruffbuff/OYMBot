@@ -76,7 +76,7 @@ export class CommandManager {
       description: 'Show available commands',
       aliases: ['/help'],
       execute: async () => {
-        return `📚 Available Commands: /status, /clear, /model, /help`;
+        return `📚 Available Commands: /status, /clear, /model, /configure, /help`;
       },
     });
 
@@ -125,6 +125,57 @@ export class CommandManager {
         await ctx.memoryManager.createAgent(agent);
 
         return `✅ Model changed to ${provider}/${model}`;
+      },
+    });
+
+    // Configure integrations (Firecrawl, etc.)
+    this.registerCommand({
+      name: 'configure',
+      description: 'Configure integrations. Usage: /configure firecrawl <api_key> | /configure show',
+      aliases: ['/configure'],
+      execute: async (args, _ctx) => {
+        if (args.length === 0 || args[0] === 'show') {
+          const firecrawlSet = !!process.env.FIRECRAWL_API_KEY;
+          const openaiSet = !!process.env.OPENAI_API_KEY;
+          const openrouterSet = !!process.env.OPENROUTER_API_KEY;
+          const anthropicSet = !!process.env.ANTHROPIC_API_KEY;
+          return `⚙️ Integration Status\n\n` +
+            `🔥 Firecrawl: ${firecrawlSet ? '✅ Configured' : '❌ Not set — /configure firecrawl <key>'}\n` +
+            `🤖 OpenAI: ${openaiSet ? '✅ Configured' : '❌ Not set'}\n` +
+            `🔀 OpenRouter: ${openrouterSet ? '✅ Configured' : '❌ Not set'}\n` +
+            `🧠 Anthropic: ${anthropicSet ? '✅ Configured' : '❌ Not set'}\n\n` +
+            `Get Firecrawl key: https://firecrawl.dev`;
+        }
+
+        const integration = args[0].toLowerCase();
+        const value = args[1];
+
+        if (!value) return `❌ Usage: /configure ${integration} <value>`;
+
+        if (integration === 'firecrawl') {
+          // Write to .env file
+          const envPath = new URL('../../../../.env', import.meta.url).pathname;
+          try {
+            const { readFileSync, writeFileSync } = await import('fs');
+            let envContent = '';
+            try { envContent = readFileSync(envPath, 'utf-8'); } catch { /* new file */ }
+
+            if (envContent.includes('FIRECRAWL_API_KEY=')) {
+              envContent = envContent.replace(/FIRECRAWL_API_KEY=.*/g, `FIRECRAWL_API_KEY=${value}`);
+            } else {
+              envContent += `\n# Firecrawl\nFIRECRAWL_API_KEY=${value}\n`;
+            }
+            writeFileSync(envPath, envContent, 'utf-8');
+            process.env.FIRECRAWL_API_KEY = value;
+            return `✅ Firecrawl API key saved. Tools firecrawl_scrape and firecrawl_crawl are now available.`;
+          } catch (e: any) {
+            // Fallback: just set in process.env for this session
+            process.env.FIRECRAWL_API_KEY = value;
+            return `✅ Firecrawl key set for this session (could not write to .env: ${e.message}). Restart gateway to persist.`;
+          }
+        }
+
+        return `❌ Unknown integration: ${integration}. Available: firecrawl`;
       },
     });
 

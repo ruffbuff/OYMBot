@@ -25,6 +25,8 @@ class BlessedTUI {
   private socket: any;
   private currentAgent: Agent | null = null;
   private sessionKey: string = '';
+  private allAgents: Agent[] = [];
+  private planProgress: string = '';
 
   constructor() {
     // 1. Create screen
@@ -151,7 +153,33 @@ class BlessedTUI {
       }
       
       if (text === '/help') {
-        this.logMessage('{yellow-fg}Available Commands:{/yellow-fg}\n/clear - Reset context\n/status - Show agent status\n/help - Show this help');
+        this.logMessage('{yellow-fg}Available Commands:{/yellow-fg}\n/clear - Reset context\n/status - Show agent status\n/model - Show current model\n/model <provider>/<model> - Switch model\n/agents - List available agents\n/help - Show this help');
+        return;
+      }
+
+      if (text === '/agents') {
+        if (this.allAgents.length === 0) {
+          this.logMessage('{yellow-fg}No agents available.{/yellow-fg}');
+        } else {
+          const list = this.allAgents.map((a, i) =>
+            `  ${i + 1}. {cyan-fg}${a.name}{/cyan-fg} [${a.id}] - {${a.status === 'idle' ? 'green' : 'yellow'}-fg}${a.status}{/${a.status === 'idle' ? 'green' : 'yellow'}-fg}${this.currentAgent?.id === a.id ? ' {bold}← current{/bold}' : ''}`
+          ).join('\n');
+          this.logMessage(`{yellow-fg}Available Agents:{/yellow-fg}\n${list}\n{gray-fg}Use /switch <name> to switch agents{/gray-fg}`);
+        }
+        return;
+      }
+
+      if (text.startsWith('/switch ')) {
+        const name = text.slice(8).trim().toLowerCase();
+        const target = this.allAgents.find((a) => a.name.toLowerCase().includes(name) || a.id.toLowerCase().includes(name));
+        if (!target) {
+          this.logMessage(`{red-fg}Agent not found: ${name}{/red-fg}`);
+        } else {
+          this.currentAgent = target;
+          this.sessionKey = `cli:local:${target.id}`;
+          this.logMessage(`{green-fg}✅ Switched to agent: ${target.name}{/green-fg}`);
+          this.updateHeader();
+        }
         return;
       }
 
@@ -211,9 +239,10 @@ class BlessedTUI {
       const agentAny = this.currentAgent as any;
       const model = agentAny.llm?.model || 'N/A';
       const provider = agentAny.llm?.provider || 'N/A';
+      const planStr = this.planProgress ? ` | {yellow-fg}Plan: ${this.planProgress}{/yellow-fg}` : '';
 
       this.infoBar.setContent(
-        ` {bold}MODEL:{/bold} {cyan-fg}${model}{/cyan-fg} | {bold}PROVIDER:{/bold} {cyan-fg}${provider}{/cyan-fg} | {bold}SESSION:{/bold} {white-fg}${this.sessionKey}{/white-fg}`
+        ` {bold}MODEL:{/bold} {cyan-fg}${model}{/cyan-fg} | {bold}PROVIDER:{/bold} {cyan-fg}${provider}{/cyan-fg} | {bold}SESSION:{/bold} {white-fg}${this.sessionKey}{/white-fg}${planStr}`
       );
     }
     
@@ -229,6 +258,7 @@ class BlessedTUI {
     });
 
     this.socket.on('agents:list', (data: { agents: Agent[] }) => {
+      this.allAgents = data.agents;
       if (data.agents.length > 0 && !this.currentAgent) {
         this.currentAgent = data.agents[0];
         this.sessionKey = `cli:local:${this.currentAgent.id}`;
@@ -246,6 +276,10 @@ class BlessedTUI {
 
     this.socket.on('agent:step', (data: AgentStep & { agentId: string }) => {
       if (this.currentAgent && data.agentId === this.currentAgent.id) {
+        if (data.planProgress) {
+          this.planProgress = data.planProgress;
+          this.updateHeader();
+        }
         if (data.tool) {
           this.logMessage(`  {yellow-fg}⚙️ Step ${data.step}: Using tool "${data.tool}"{/yellow-fg}`);
           if (data.params) {
@@ -269,6 +303,8 @@ class BlessedTUI {
     });
 
     this.socket.on('task:result', (data: { result: string }) => {
+      this.planProgress = ''; // Clear plan progress on completion
+      this.updateHeader();
       const maxWidth = (this.screen.width as number) - 8; // Account for borders and padding
       const agentPrefix = `🤖 ${this.currentAgent?.name || 'Agent'}: `;
       const prefixLength = agentPrefix.length;

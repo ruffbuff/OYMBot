@@ -1,173 +1,143 @@
-# 🎯 TODO: Project Roadmap
+# TODO
 
-## ✅ Completed
-- [x] **Basic Gateway & Runtime**
-- [x] **Context Control**: Session-aware context implemented
-- [x] **Basic Blessed TUI**: Chat and thoughts panels (improved text wrapping)
-- [x] **Basic Tool System**: File access, shell exec, web search, codebase search
-- [x] **Fix CLI Session Creation**: CLI sessions registered in Gateway
-- [x] **Robust Tool Parsing**: Agent JSON parsing fixed
-- [x] **Frontend Session Selection**: Web UI picks existing sessions
-- [x] **Unified CLI**: Single `npm run chat` command
-- [x] **Autonomous Planner**: Architect + Engineer mode for complex tasks
-- [x] **Hot-reload**: Auto-reload AGENT.md on changes
-- [x] **Full FS Access**: Absolute paths, relative paths, ~ support
-- [x] **SOUL.md Integration**: Personality loaded into system prompt
-- [x] **Advanced Memory System**: Two-layer memory with search capabilities
-  - [x] Daily logs (memory/*.md) with auto-logging
-  - [x] Memory search (search_memory, search_sessions, get_recent_activity)
-  - [x] Auto-search memory for relevant questions
-  - [x] Improved system prompts with mandatory memory instructions
-- [x] **Agent Startup Validation**: Gateway won't start without agents
-- [x] **TOOLS.md Auto-generation**: Documentation created during onboarding
+## Tasks
 
-## 🔴 Critical (Must Have)
+- [x] Basic Gateway & Runtime
+- [x] Context Control — session-aware context
+- [x] Basic Blessed TUI — chat and thoughts panels
+- [x] Basic Tool System — file access, shell exec, web search, codebase search
+- [x] Fix CLI Session Creation — CLI sessions registered in Gateway
+- [x] Robust Tool Parsing — agent JSON parsing fixed
+- [x] Frontend Session Selection — Web UI picks existing sessions
+- [x] Unified CLI — single `npm run chat` command
+- [x] Autonomous Planner — Architect + Engineer mode for complex tasks
+- [x] Hot-reload — auto-reload AGENT.md on changes
+- [x] Full FS Access — absolute paths, relative paths, ~ support
+- [x] SOUL.md Integration — personality loaded into system prompt
+- [x] Advanced Memory System — two-layer memory with search
+- [x] Daily logs (memory/*.md)
+- [x] Memory search tools — search_memory, search_sessions, get_recent_activity
+- [x] Auto-search memory for relevant questions
+- [x] Agent Startup Validation — gateway won't start without agents
+- [x] TOOLS.md Auto-generation — created during onboarding
+- [x] Tool Policies System — layered policies (global → agent → group → sandbox)
+- [x] Tool groups — group:fs, group:runtime, group:network
+- [x] Per-agent tool allowlist/denylist
+- [x] Dangerous command confirmation
+- [x] Sandboxed Execution — workspace isolation for file operations
+- [x] Telegram Whitelist — restrict access by User ID
+- [x] Rate Limiting — message throttling
+- [x] Plugin Architecture — hook-based (before/after tool call, message received/sent)
+- [x] Plugin Tools — plugins can register custom tools
+- [x] Plugin Commands — plugins can add custom commands
+- [x] Memory Compaction — automatic summarization of old memories
+- [x] Memory Flush — save important context before compaction
+- [x] Advanced Context Control — token-aware manager for different model windows
+- [x] Skills Architecture — reusable prompt templates (workspace + global)
+- [x] Subagents — spawn child agents via `delegate_task` tool
+- [x] Agent Routing — routeMessage() + POST /api/route
+- [x] Agent Collaboration — `ask_agent`, `broadcast_to_agents` tools
+- [x] Firecrawl Integration — firecrawl_scrape + firecrawl_crawl, настройка через onboarding и `/configure firecrawl <key>`
+- [x] Model Selection in TUI — /model, /agents, /switch commands
+- [x] CLI Onboarding — dynamic model lists, Ollama Cloud, BOOTSTRAP.md ritual
+- [x] Plan visualization — PlanProgress component with step-by-step progress bar
+- [x] Tool execution timeline — agent:step events shown in chat
+- [x] Cron Jobs — REST API: GET/POST/DELETE /api/cron
+- [x] API Gateway — POST /api/route for agent routing
+- [x] Anthropic provider — Claude support in LLMManager
+- [x] Ollama Cloud provider — cloud models via ollama.com
+- [x] BOOTSTRAP.md — one-time first-run ritual, auto-deleted after completion
+- [x] USER.md — user profile file, written by agent during bootstrap
+- [x] Control UI — built-in browser chat served at GET / on gateway port
+- [x] Hatch flow — after onboarding: choose TUI / Control UI / Later
+- [x] Session context refactor — single .jsonl source of truth, no more context.md duplication
+- [x] SQLite auto-pruning — logs older than 30 days
+- [x] System Heartbeat & Cron jobs — recurring tasks, health-checking agents
+- [x] Visual Office — mini-game interface for agent management (frontend)
+- [x] Dual Mode — Reactive (simple) + Planner (complex)
+- [ ] Vector embeddings — semantic memory search (currently only text search)
+- [ ] Skill Marketplace — browse and install community skills
+- [ ] Browser Tool — headless browser control (Playwright/Puppeteer)
+- [ ] App Integrations — Notion, Obsidian, Linear
+- [ ] Image Generation — DALL-E, Stable Diffusion
+- [ ] TTS/STT — voice input/output
+- [ ] Advanced TUI — real-time resource monitoring (RAM/CPU)
+- [ ] Agent status dashboard — in visual office frontend
+- [ ] Webhooks — external integrations
+- [ ] Docker Support — containerized deployment
+- [ ] Cloud Deployment — deploy to cloud providers
+- [ ] Discord Integration
+- [ ] Slack Integration
+- [ ] WhatsApp Integration
+- [ ] Signal Integration
+- [ ] iMessage Integration (macOS only)
+- [ ] Testing Suite — unit and integration tests
+- [ ] Documentation — API docs, architecture docs
+- [ ] Examples — sample agents and use cases
+- [ ] Debugging Tools — better logging and tracing
+- [ ] Agent Personalities — rich personality system beyond SOUL.md
+- [ ] Learning System — agents learn from interactions
+- [ ] Workflow Builder — visual workflow creation
+- [ ] Agent Marketplace — share and discover agents
+- [ ] Collaborative Agents — multiple agents working on same task
+- [ ] Plugin installation from NPM / Git
+- [ ] Multi-Agent Orchestrator — agent template specialized in breaking down and spawning child agents
+- [ ] Agent-to-agent communication protocol
+- [ ] Mobile app for agent management
+- [ ] Control UI — markdown rendering + code highlighting in chat responses
+- [ ] Control UI — sessions panel with history loaded from .jsonl
+- [ ] Control UI — config editor for agent settings (AGENT.md fields) via REST
+- [ ] Control UI — live logs viewer with level filtering (info/warn/error)
+- [ ] Control UI — cron jobs panel (API exists, needs UI)
+- [ ] Control UI — skills panel (view, enable/disable, install)
+- [ ] Gateway auth token — generate random token on start, require for Control UI connections, store as GATEWAY_TOKEN in .env
+- [ ] Device pairing — first connection from new browser requires CLI approval, localhost auto-approved
+- [ ] Session abort — ability to stop current agent request mid-run (task:abort event)
+- [ ] Session reset — /new command or button to clear context without deleting history
+- [ ] Queue mode — if agent is busy, queue incoming messages instead of dropping them
+- [ ] Block streaming — stream agent response chunks as they generate, not wait for full response
+- [ ] TUI — picker overlays: Ctrl+G agent picker, Ctrl+P session picker, Ctrl+L model picker with fuzzy search
+- [ ] TUI — extended slash commands: /new, /verbose, /think, /abort
+- [ ] TUI — bang commands: !command runs shell locally without sending to agent
+- [ ] TUI — markdown rendering in agent responses
+- [ ] TUI — collapsible tool output (Ctrl+O)
+- [ ] `npm run configure` — reconfigure without full onboarding (change model, add channel, update key)
+- [ ] `npm run doctor` — health check: validates .env, agents, gateway, channels, prints what's broken
+- [ ] Config validation — validate AGENT.md required fields on gateway start with clear errors
+- [ ] Onboarding wizard via browser — same flow as CLI but driven through Control UI WebSocket
+- [ ] Profile system — multiple isolated instances (--profile staging) with separate agents, ports, .env
+- [ ] USER.md auto-update — agent updates USER.md whenever it learns new facts about the user (not only during bootstrap)
+- [ ] HEARTBEAT.md — file with instructions for cron wakeups (check email, make daily summary, etc.)
+- [ ] Memory search improvements — filter by date, filter by type (facts only / logs only)
+- [ ] Session transcript export — export history to markdown/PDF via Control UI or CLI
+- [ ] Channel status in Control UI — show connected/disconnected per channel, last message time
+- [ ] Per-channel tool restrictions — different tool policies per channel (Telegram gets less than CLI)
+- [ ] Webhook delivery for cron — cron job can POST result to a webhook URL instead of a channel
+- [ ] Multi-agent routing rules — route messages to specific agents by keyword/channel/user
+- [ ] Gateway daemon — run as system service (launchd macOS, systemd Linux) via `npm run gateway install`
+- [ ] **CLI installer & npm publish** — единая точка входа `oym` как глобальная npm команда. Включает: `bin` поле в package.json, `src/cli.ts` с commander (команды `oym onboard`, `oym gateway`, `oym chat`, `oym hatch`, `oym doctor`), shebang в dist/cli.js, `npm publish`, `install.sh` для macOS/Linux (проверяет Node, делает `npm i -g oym`, запускает `oym onboard`), `install.ps1` для Windows. Итог: `curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash` → всё готово
+- [ ] Usage cost tracking — count tokens and estimated cost per session/agent, store in SQLite, show in Control UI
+- [ ] Distributed nodes — multiple gateway instances, agents can delegate tasks to other nodes
 
-### Security & Safety
-- [x] **Tool Policies System**: Layered policies (global → agent → group → sandbox)
-  - [x] Tool groups (group:fs, group:runtime, group:network)
-  - [x] Per-agent tool allowlist/denylist
-  - [x] Per-channel tool restrictions
-  - [x] Dangerous command confirmation
-- [x] **Sandboxed Execution**: Workspace isolation for file operations
-  - [x] Restrict file access to workspace by default
-  - [x] Whitelist for absolute paths
-  - [x] Safe shell command execution
-- [x] **Telegram Whitelist**: Restrict access by User ID + Pair Codes
-- [x] **Rate Limiting**: Prevent abuse (Message throttling)
+---
 
-### Plugin System
-- [x] **Plugin Architecture**: Hook-based extensibility (like OpenClaw)
-  - [x] before_tool_call / after_tool_call hooks
-  - [x] before_agent_start / agent_end hooks
-  - [x] message_received / message_sent hooks
-  - [x] Plugin registry and loader
-- [x] **Plugin Tools**: Plugins can register custom tools
-- [x] **Plugin Commands**: Plugins can add custom commands
+## Bugs
 
-## 🟡 Important (Should Have)
-
-### Memory & Context
-- [x] **Memory Search**: Semantic search in MEMORY.md + memory/*.md
-  - [x] search_memory tool
-  - [x] search_sessions tool
-  - [x] get_recent_activity tool
-  - [x] Auto-search for relevant questions
-  - [ ] Vector embeddings (optional, for semantic search)
-- [x] **Daily Memory Logs**: Automatic memory/YYYY-MM-DD.md files
-- [x] **Auto-logging**: Automatic logging of user requests and task completions
-- [x] **Advanced Context Control**: Token-aware manager for different model windows
-- [x] **Memory Compaction**: Automatic summarization of old memories
-- [x] **Memory Flush**: Save important context before compaction
-
-### Skills System
-- [x] **Skills Architecture**: Reusable prompt templates
-  - [x] Workspace skills (workspace/skills/)
-  - [x] Global skills (~/.oym-bot/skills/)
-  - [x] Skill loading and injection
-- [ ] **Skill Marketplace**: Browse and install community skills
-
-### Multi-Agent
-- [x] **Subagents**: Spawn child agents for subtasks (Implemented via `delegate_task` tool)
-- [ ] **Agent Routing**: Route messages to different agents
-- [ ] **Agent Collaboration**: Agents can work together
-
-### Advanced Tools
-- [ ] **Browser Tool**: Headless browser control (Playwright/Puppeteer)
-- [ ] **Firecrawl Integration**: Better web scraping
-- [ ] **App Integrations**: Notion, Obsidian, Linear
-- [ ] **Image Generation**: DALL-E, Stable Diffusion
-- [ ] **TTS/STT**: Voice input/output
-
-## 🟢 Nice to Have (Could Have)
-
-### UI/UX
-- [ ] **Advanced TUI**: Real-time resource monitoring (RAM/CPU)
-- [ ] **Model Selection in TUI**: Switch models on the fly
-- [ ] **CLI Onboarding**: Improved UX with better prompts
-- [ ] **Web UI Improvements**: 
-  - [ ] Plan visualization
-  - [ ] Tool execution timeline
-  - [ ] Agent status dashboard
-
-### Infrastructure
-- [ ] **Cron Jobs**: Scheduled tasks
-- [ ] **Webhooks**: External integrations
-- [ ] **API Gateway**: REST API for external access
-- [ ] **Docker Support**: Containerized deployment
-- [ ] **Cloud Deployment**: Deploy to cloud providers
-
-### Channels
-- [ ] **Discord Integration**
-- [ ] **Slack Integration**
-- [ ] **WhatsApp Integration**
-- [ ] **Signal Integration**
-- [ ] **iMessage Integration** (macOS only)
-
-### Developer Experience
-- [ ] **Testing Suite**: Unit and integration tests
-- [ ] **Documentation**: API docs, architecture docs
-- [ ] **Examples**: Sample agents and use cases
-- [ ] **Debugging Tools**: Better logging and tracing
-
-## 🎨 Unique Features (Our Differentiators)
-
-### Already Implemented ✅
-- [x] **Autonomous Planner**: Break down complex tasks automatically
-- [x] **Visual Office**: Mini-game interface for agent management
-- [x] **Dual Mode**: Reactive (simple) + Planner (complex)
-- [x] **Hot-reload**: Live config updates
-
-### Planned 🚀
-- [ ] **Agent Personalities**: Rich personality system beyond SOUL.md
-- [ ] **Learning System**: Agents learn from interactions
-- [ ] **Workflow Builder**: Visual workflow creation
-- [ ] **Agent Marketplace**: Share and discover agents
-- [ ] **Collaborative Agents**: Multiple agents working on same task
-
-## 📊 Development Status
-
-### Current Features ✅
-- Autonomous Planner
-- Full FS access
-- SOUL.md integration
-- Hot-reload
-- Advanced Memory System
-- Agent startup validation
-- TOOLS.md auto-generation
-- CLI text wrapping improvements
-
-### Next Priorities 🔄
-- Agent Routing
-- Browser Tool
-- Advanced TUI
-
-### Future Goals 🚀
-- All critical features
-- Production-ready security
-- Full documentation
-- Testing suite
-
-## 🐛 Known Issues & Bugs
-- [ ] TypeScript errors in some files (need npm install)
-- [x] Session persistence could be improved (Save active connections to SQLite)
-- [x] Error handling in planner needs work (Loop prevention mechanisms)
-- [x] Tool execution timeout handling (Plugin blocking can stall execution)
-- [x] **Dangerous Action Leak**: `ToolManager` stores pending hashes forever if unused; needs a TTL/cleanup mechanism.
-- [x] **Memory Flush not implemented**: Agents don't save context before compaction
-- [ ] **No vector embeddings**: Only basic text search available
-- [x] **No memory compaction**: Old logs accumulate without summarization
-
-## 💡 Ideas for Future & Improvements
-- **Mission Control Panel**: Comprehensive frontend dashboard covering all agents, models, memory logs, and tasks.
-- **Top-Down Agent Visualizer**: React/Web renderer in frontend showing agents as workers (working/resting/sleeping) in a facility.
-- [x] **System Heartbeat & Cron jobs**: Recurring tasks, health-checking agents, and waking them up via scheduling.
-- Plugin installation from NPM / Git (Like OpenClaw's plugin marketplace)
-- [x] SQLite Auto-pruning for logs older than 30 days
-- Multi-Agent "Orchestrator" Agent template (Specialized in breaking down and spawning child agents)
-- Agent-to-agent communication protocol
-- Distributed agent network
-- Agent memory sharing
-- Agent specialization (coding, writing, research)
-- Integration with external AI services
-- Mobile app for agent management
+- [x] TypeScript errors in some files
+- [x] Session persistence — save active connections to SQLite
+- [x] Error handling in planner — loop prevention
+- [x] Tool execution timeout — plugin blocking could stall execution
+- [x] Dangerous Action Leak — ToolManager stored pending hashes forever, added TTL
+- [x] Memory Flush not implemented — agents didn't save context before compaction
+- [x] Memory compaction — old logs accumulated without summarization
+- [x] context.md duplication — same conversation written to 3 files (jsonl + context.md + daily log)
+- [x] tools.enabled list not enforced — canExecute() didn't check the allowlist
+- [x] Anthropic missing — provider existed in types but threw in LLMManager
+- [x] OfficeScene used useAgentStore.getState() inside JSX handler (non-idiomatic React)
+- [x] agent:step events not handled on frontend — steps arrived but store had no subscription
+- [x] Wrong comment in saveMessageToTranscript — said "Write to MD file" but wrote .jsonl
+- [ ] No vector embeddings — only basic text search available
+- [ ] Queue mode missing — second message while agent is busy gets dropped silently
+- [ ] Session abort missing — no way to stop a hung agent run
+- [ ] Control UI WebSocket — currently uses raw socket.io wire protocol manually, fragile
+- [ ] Gateway has no auth — Control UI accessible to anyone on the network without a token

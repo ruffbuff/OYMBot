@@ -5,6 +5,7 @@ import { AgentCharacter } from "@/components/agents/AgentCharacter";
 
 export function OfficeScene() {
   const agents = useAgentStore((state) => state.agents);
+  const selectAgent = useAgentStore((state) => state.selectAgent);
 
   // Manager position (top center - where agents go when they have errors)
   const managerPosition = { x: 50, y: 15 };
@@ -21,10 +22,7 @@ export function OfficeScene() {
 
   return (
     <div className="relative w-full h-full bg-gradient-to-br from-slate-800 to-slate-900 rounded-lg overflow-hidden"
-      onClick={() => {
-        // Click on background to deselect
-        useAgentStore.getState().selectAgent(null);
-      }}
+      onClick={() => selectAgent(null)}
     >
       {/* Office Walls */}
       <div className="absolute inset-0 border-8 border-slate-700 rounded-lg" />

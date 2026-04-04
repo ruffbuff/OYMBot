@@ -421,16 +421,94 @@ export class ToolManager {
     this.registerTool({
       name: 'web_search',
       group: 'network',
-      description: 'Fetch content from URL',
-      parameters: { query: 'string - URL' },
-      execute: async (params: { query: string }) => {
+      description: 'Fetch raw content from a URL and return plain text',
+      parameters: { url: 'string - full URL starting with http/https' },
+      execute: async (params: { url: string }) => {
         try {
-          if (!params.query.startsWith('http')) return 'Error: Invalid URL';
-          const response = await fetch(params.query);
+          if (!params.url.startsWith('http')) return 'Error: Invalid URL';
+          const response = await fetch(params.url);
           if (!response.ok) return `Error: ${response.status}`;
           const text = (await response.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
           return text.slice(0, 5000);
         } catch (error: any) { return `Error: ${error.message}`; }
+      },
+    });
+
+    // Firecrawl tools (requires FIRECRAWL_API_KEY in .env)
+    this.registerTool({
+      name: 'firecrawl_scrape',
+      group: 'network',
+      description: 'Scrape a single URL using Firecrawl API — returns clean markdown content. Much better than scrape_website for complex pages. Requires FIRECRAWL_API_KEY.',
+      parameters: {
+        url: 'string - URL to scrape',
+        formats: 'string[] - output formats, default ["markdown"] (options: markdown, html, rawHtml, screenshot)',
+      },
+      execute: async (params: { url: string; formats?: string[] }) => {
+        const apiKey = process.env.FIRECRAWL_API_KEY;
+        if (!apiKey) return 'Error: FIRECRAWL_API_KEY not set. Add it to .env or run /configure firecrawl <key>';
+        if (!params.url.startsWith('http')) return 'Error: Invalid URL';
+        try {
+          const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: params.url, formats: params.formats || ['markdown'] }),
+          });
+          if (!response.ok) {
+            const err = await response.text();
+            return `Firecrawl error ${response.status}: ${err}`;
+          }
+          const data = await response.json() as any;
+          const content = data.data?.markdown || data.data?.html || JSON.stringify(data.data);
+          return `Firecrawl result from ${params.url}:\n\n${content.slice(0, 10000)}`;
+        } catch (error: any) {
+          return `Firecrawl scrape error: ${error.message}`;
+        }
+      },
+    });
+
+    this.registerTool({
+      name: 'firecrawl_crawl',
+      group: 'network',
+      description: 'Crawl an entire website using Firecrawl API — follows links and returns all pages as markdown. Good for documentation sites. Requires FIRECRAWL_API_KEY.',
+      parameters: {
+        url: 'string - base URL to start crawling from',
+        maxPages: 'number - max pages to crawl (default: 10)',
+      },
+      execute: async (params: { url: string; maxPages?: number }) => {
+        const apiKey = process.env.FIRECRAWL_API_KEY;
+        if (!apiKey) return 'Error: FIRECRAWL_API_KEY not set. Add it to .env or run /configure firecrawl <key>';
+        if (!params.url.startsWith('http')) return 'Error: Invalid URL';
+        try {
+          // Start crawl job
+          const startRes = await fetch('https://api.firecrawl.dev/v1/crawl', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: params.url, limit: params.maxPages || 10, scrapeOptions: { formats: ['markdown'] } }),
+          });
+          if (!startRes.ok) {
+            const err = await startRes.text();
+            return `Firecrawl crawl error ${startRes.status}: ${err}`;
+          }
+          const { id } = await startRes.json() as any;
+
+          // Poll for results (max 30s)
+          for (let i = 0; i < 10; i++) {
+            await new Promise(r => setTimeout(r, 3000));
+            const statusRes = await fetch(`https://api.firecrawl.dev/v1/crawl/${id}`, {
+              headers: { 'Authorization': `Bearer ${apiKey}` },
+            });
+            const status = await statusRes.json() as any;
+            if (status.status === 'completed') {
+              const pages = (status.data || []).slice(0, params.maxPages || 10);
+              const result = pages.map((p: any) => `## ${p.metadata?.title || p.url}\n${p.markdown?.slice(0, 2000) || ''}`).join('\n\n---\n\n');
+              return `Crawled ${pages.length} pages from ${params.url}:\n\n${result}`;
+            }
+            if (status.status === 'failed') return `Crawl failed: ${status.error}`;
+          }
+          return 'Crawl timed out after 30s. Try firecrawl_scrape for a single page instead.';
+        } catch (error: any) {
+          return `Firecrawl crawl error: ${error.message}`;
+        }
       },
     });
 
@@ -466,8 +544,14 @@ export class ToolManager {
     const tool = this.getTool(toolName);
     if (!tool) return { allowed: false, reason: `Tool "${toolName}" not found` };
 
-    // Check specific tool policy
     const policies = agent.tools?.policies || [];
+
+    // 0. If enabled list is non-empty, tool must be in it
+    if (agent.tools?.enabled && agent.tools.enabled.length > 0) {
+      if (!agent.tools.enabled.includes(toolName)) {
+        return { allowed: false, reason: `Tool "${toolName}" is not in the agent's enabled list`, action: 'deny' };
+      }
+    }
 
     // 1. Check direct tool policy
     const toolPolicy = policies.find((p: ToolPolicy) => p.name === toolName);

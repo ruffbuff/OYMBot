@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAgentStore } from "@/store/useAgentStore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Zap, AlertCircle, MessageSquare, Wifi, WifiOff, Send, Monitor, Smartphone, Terminal } from "lucide-react";
+import { Activity, Zap, AlertCircle, MessageSquare, Wifi, WifiOff, Send, Monitor, Smartphone, Terminal, ChevronRight, Wrench, Brain } from "lucide-react";
+import { PlanProgress } from "@/components/agents/PlanProgress";
 
 export function AgentPanel() {
   const agents = useAgentStore((state) => state.agents);
@@ -16,30 +17,50 @@ export function AgentPanel() {
   const selectSession = useAgentStore((state) => state.selectSession);
   const connected = useAgentStore((state) => state.connected);
   const sendTask = useAgentStore((state) => state.sendTask);
+  const agentSteps = useAgentStore((state) => state.agentSteps);
 
   const [showChat, setShowChat] = useState(false);
   const [showSessionSelector, setShowSessionSelector] = useState(false);
   const [message, setMessage] = useState("");
-  const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string }>>([]);
+  const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string; isStep?: boolean }>>([]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
   const selectedSession = sessions.find((s) => s.sessionKey === selectedSessionKey);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory]);
+
+  // Inject live agent steps into chat as they arrive
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    const steps = agentSteps[selectedAgentId] || [];
+    if (steps.length === 0) return;
+
+    const lastStep = steps[steps.length - 1];
+    const stepContent = formatStep(lastStep);
+
+    setChatHistory((prev) => {
+      // Replace "Thinking..." placeholder if present
+      const withoutThinking = prev.filter((m) => m.content !== "Thinking...");
+      // Avoid duplicate steps
+      const alreadyExists = withoutThinking.some((m) => m.isStep && m.content === stepContent);
+      if (alreadyExists) return prev;
+      return [...withoutThinking, { role: "agent", content: stepContent, isStep: true }];
+    });
+  }, [agentSteps, selectedAgentId]);
 
   // Listen for agent responses
   useEffect(() => {
     const handleAgentResponse = (event: CustomEvent) => {
       const { agentId, sessionKey, message } = event.detail;
       if (agentId === selectedAgentId && sessionKey === selectedSessionKey) {
-        // Replace "Thinking..." with actual response
+        // Replace last step/thinking with final response
         setChatHistory((prev) => {
-          const newHistory = [...prev];
-          const lastIndex = newHistory.length - 1;
-          if (lastIndex >= 0 && newHistory[lastIndex].content === "Thinking...") {
-            newHistory[lastIndex] = { role: "agent", content: message };
-          } else {
-            newHistory.push({ role: "agent", content: message });
-          }
-          return newHistory;
+          const withoutPending = prev.filter((m) => m.content !== "Thinking...");
+          return [...withoutPending, { role: "agent", content: message }];
         });
       }
     };
@@ -49,6 +70,18 @@ export function AgentPanel() {
       window.removeEventListener('agent-response', handleAgentResponse as EventListener);
     };
   }, [selectedAgentId, selectedSessionKey]);
+
+  const formatStep = (step: { step: number; thought?: string; tool?: string; params?: Record<string, unknown>; result?: string; planProgress?: string }) => {
+    const parts: string[] = [];
+    if (step.planProgress) parts.push(`📋 ${step.planProgress}`);
+    if (step.thought) parts.push(`💭 ${step.thought}`);
+    if (step.tool) {
+      const paramsStr = step.params ? ` (${Object.entries(step.params).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(', ')})` : '';
+      parts.push(`🔧 ${step.tool}${paramsStr}`);
+    }
+    if (step.result) parts.push(`✅ ${step.result.slice(0, 200)}${step.result.length > 200 ? '...' : ''}`);
+    return parts.join('\n') || `Step ${step.step}`;
+  };
 
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -88,16 +121,10 @@ export function AgentPanel() {
   const handleSendMessage = () => {
     if (!message.trim() || !selectedAgentId || !selectedSessionKey) return;
 
-    // Add user message to chat
     setChatHistory([...chatHistory, { role: "user", content: message }]);
-
-    // Send to agent with session key
     sendTask(selectedAgentId, message, selectedSessionKey);
-
-    // Clear input
     setMessage("");
-
-    // Add placeholder for agent response
+    // Placeholder until first step arrives
     setChatHistory((prev) => [...prev, { role: "agent", content: "Thinking..." }]);
   };
 
@@ -312,18 +339,37 @@ export function AgentPanel() {
                   key={idx}
                   className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
-                  <div
-                    className={`max-w-[80%] rounded-lg p-3 ${
-                      msg.role === "user"
-                        ? "bg-blue-600 text-white"
-                        : "bg-slate-700 text-slate-100"
-                    }`}
-                  >
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                  </div>
+                  {msg.isStep ? (
+                    // Step bubble — compact, muted style
+                    <div className="max-w-[90%] rounded-lg p-2 bg-slate-800 border border-slate-600 text-slate-300">
+                      <div className="flex items-center gap-1 mb-1 text-xs text-slate-500">
+                        <Brain className="w-3 h-3" />
+                        <span>Agent thinking</span>
+                      </div>
+                      <p className="text-xs whitespace-pre-wrap font-mono">{msg.content}</p>
+                    </div>
+                  ) : (
+                    <div
+                      className={`max-w-[80%] rounded-lg p-3 ${
+                        msg.role === "user"
+                          ? "bg-blue-600 text-white"
+                          : msg.content === "Thinking..."
+                          ? "bg-slate-700 text-slate-400 animate-pulse"
+                          : "bg-slate-700 text-slate-100"
+                      }`}
+                    >
+                      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                    </div>
+                  )}
                 </div>
               ))}
+              <div ref={chatEndRef} />
             </div>
+
+            {/* Plan Progress (shown when agent is executing a plan) */}
+            {selectedAgentId && (agentSteps[selectedAgentId] || []).some((s) => s.planProgress) && (
+              <PlanProgress steps={agentSteps[selectedAgentId] || []} />
+            )}
 
             {/* Chat Input */}
             <div className="p-4 border-t border-slate-700 bg-slate-800">

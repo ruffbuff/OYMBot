@@ -290,33 +290,108 @@ export class MemoryManager {
     }
   }
 
-  async loadContext(agentId: string, sessionKey?: string): Promise<string> {
-    if (!sessionKey) return '';
-    const sessionContextPath = this.getSessionContextPath(agentId, sessionKey);
+  async loadBootstrap(agentId: string): Promise<string> {
+    const bootstrapPath = path.join(this.agentsDir, agentId, 'BOOTSTRAP.md');
     try {
-      return await fs.readFile(sessionContextPath, 'utf-8');
-    } catch (error) {
-      const initialContext = await this.createInitialContext(agentId);
-      await this.updateContext(agentId, initialContext, sessionKey);
-      return initialContext;
+      const content = await fs.readFile(bootstrapPath, 'utf-8');
+      return content.trim();
+    } catch {
+      return '';
     }
   }
 
-  private async createInitialContext(agentId: string): Promise<string> {
-    const agent = await this.loadAgent(agentId);
-    return `# Session Context\n\n## Session Started\nReady to help!`;
+  async deleteBootstrap(agentId: string): Promise<void> {
+    const bootstrapPath = path.join(this.agentsDir, agentId, 'BOOTSTRAP.md');
+    try {
+      await fs.unlink(bootstrapPath);
+      logger.info(`🗑️ BOOTSTRAP.md deleted for agent ${agentId} — ritual complete`);
+    } catch { /* already gone */ }
   }
 
-  async updateContext(agentId: string, content: string, sessionKey?: string): Promise<void> {
-    if (!sessionKey) return;
-    const sessionContextPath = this.getSessionContextPath(agentId, sessionKey);
+  async loadUserProfile(agentId: string): Promise<string> {
+    const userPath = path.join(this.agentsDir, agentId, 'USER.md');
     try {
-      await fs.mkdir(path.dirname(sessionContextPath), { recursive: true });
-      await fs.writeFile(sessionContextPath, content, 'utf-8');
-    } catch (error) { }
+      return await fs.readFile(userPath, 'utf-8');
+    } catch {
+      return '';
+    }
+  }
+
+  async saveUserProfile(agentId: string, content: string): Promise<void> {
+    const userPath = path.join(this.agentsDir, agentId, 'USER.md');
+    try {
+      await fs.writeFile(userPath, content, 'utf-8');
+      logger.info(`💾 USER.md updated for agent ${agentId}`);
+    } catch (error) {
+      logger.error(`Failed to save USER.md for ${agentId}:`, error);
+    }
+  }
+
+  async loadContext(agentId: string, sessionKey?: string): Promise<string> {
+    if (!sessionKey) return '';
+    // Build conversation history from the canonical .jsonl transcript
+    return this.buildContextFromTranscript(agentId, sessionKey);
+  }
+
+  /**
+   * Reads the .jsonl transcript for this session and returns it as
+   * "User: ...\nAssistant: ..." text ready to be injected into the prompt.
+   * Falls back to the summary file if one exists (written during memory flush).
+   */
+  async buildContextFromTranscript(agentId: string, sessionKey: string, maxMessages = 40): Promise<string> {
+    const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
+    const safeKey = sessionKey.replace(/[/:]/g, '-');
+
+    // Load optional summary (written during memory flush)
+    let summary = '';
+    const summaryPath = path.join(sessionsDir, `${safeKey}-summary.md`);
+    try { summary = await fs.readFile(summaryPath, 'utf-8'); } catch { /* no summary yet */ }
+
+    // Collect all .jsonl files for this session key, sorted by date
+    let lines: { timestamp: string; role: string; content: string }[] = [];
+    try {
+      const files = (await fs.readdir(sessionsDir))
+        .filter(f => f.startsWith(safeKey) && f.endsWith('.jsonl'))
+        .sort();
+
+      for (const file of files) {
+        const raw = await fs.readFile(path.join(sessionsDir, file), 'utf-8');
+        for (const line of raw.split('\n').filter(Boolean)) {
+          try { lines.push(JSON.parse(line)); } catch { /* skip malformed */ }
+        }
+      }
+    } catch { /* no transcript yet */ }
+
+    // Keep only the last N messages to stay within token budget
+    const recent = lines.slice(-maxMessages);
+
+    const history = recent
+      .map(e => `${e.role === 'user' ? 'User' : 'Assistant'}: ${e.content}`)
+      .join('\n\n');
+
+    if (!summary && !history) return '';
+
+    return [
+      summary ? `[Previous session summary]\n${summary}` : '',
+      history,
+    ].filter(Boolean).join('\n\n---\n\n');
+  }
+
+  /** @deprecated use buildContextFromTranscript — kept for memory-flush path only */
+  async updateContext(agentId: string, content: string, sessionKey?: string): Promise<void> {
+    // Only used now to write the summary file during memory flush
+    if (!sessionKey) return;
+    const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
+    const safeKey = sessionKey.replace(/[/:]/g, '-');
+    const summaryPath = path.join(sessionsDir, `${safeKey}-summary.md`);
+    try {
+      await fs.mkdir(sessionsDir, { recursive: true });
+      await fs.writeFile(summaryPath, content, 'utf-8');
+    } catch { }
   }
 
   private getSessionContextPath(agentId: string, sessionKey: string): string {
+    // Kept for backward compat — points to old context.md (no longer written)
     const sessionsDir = path.join(this.agentsDir, agentId, 'sessions');
     const safeSessionKey = sessionKey.replace(/[/:]/g, '-');
     return path.join(sessionsDir, `${safeSessionKey}-context.md`);
@@ -331,7 +406,7 @@ export class MemoryManager {
       await fs.mkdir(sessionsDir, { recursive: true });
       const entry = { timestamp: new Date().toISOString(), role, content };
 
-      // Write to MD file
+      // Append to .jsonl transcript (one JSON object per line)
       await fs.appendFile(transcriptPath, JSON.stringify(entry) + '\n', 'utf-8');
 
       // Write to SQLite DB for fast searching
@@ -410,5 +485,14 @@ export class MemoryManager {
     const nowMs = new Date().getTime();
     const stmt = this.db.prepare(`UPDATE cron_jobs SET last_run = ? WHERE id = ?`);
     stmt.run(nowMs, jobId);
+  }
+
+  public getAllCronJobs(): any[] {
+    return this.db.prepare(`SELECT id, agent_id, description, interval_ms, last_run, created_at FROM cron_jobs ORDER BY created_at DESC`).all() as any[];
+  }
+
+  public deleteCronJob(jobId: number): void {
+    this.db.prepare(`DELETE FROM cron_jobs WHERE id = ?`).run(jobId);
+    logger.info(`🗑️ Cron job ${jobId} deleted`);
   }
 }

@@ -1,83 +1,95 @@
-# Open Your Mind Bot
+# Open Your Mind (OYM)
 
-A self-hosted, open-source platform for running autonomous AI agents. Inspired by OpenClaw, this project provides a robust backend, a visual frontend, and multi-channel support (CLI, Telegram).
+Self-hosted platform for running autonomous AI agents. Each agent has memory, tools, a personality, and can work across multiple channels — CLI, Telegram, browser.
 
-## ✨ Features
+## Stack
 
-- **Autonomous Agents**: Agents can execute multi-step tasks, use tools, and learn from their actions.
-- **Advanced Memory System**: Two-layer memory (long-term + daily logs) with search capabilities, inspired by OpenClaw but improved.
-- **Tooling**: Built-in tools for file system access (`read`, `write`, `exec`) and internet search.
-- **Multi-Channel**: Interact with your agents via CLI, Telegram, or a web-based "Office" UI.
-- **Extensible**: Easily add new agents and tools.
-- **Real-time Monitoring**: A visual frontend and verbose CLI logging let you see your agent's thoughts and actions in real-time.
+- **Backend** — Node.js + TypeScript, Express, Socket.io, SQLite
+- **Frontend** — Next.js 14, Tailwind, Zustand (visual office, optional)
+- **LLM** — OpenRouter, OpenAI, Anthropic, Ollama, Ollama Cloud
 
-## 🚀 Getting Started
-
-This project is divided into a `backend` (the agent gateway) and a `frontend` (the visual office).
-
-### 1. Backend Setup
-
-The backend runs the agent, manages sessions, and serves the API.
+## Quick Start
 
 ```bash
-# 1. Navigate to the backend directory
 cd backend
-
-# 2. Install dependencies
 npm install
-
-# 3. Run the onboarding process to create your first agent
-# This will ask for your AI provider keys and create a .env file.
 npm run onboard
-
-# 4. Start the gateway server (only works after onboarding)
-# The server will run on http://localhost:4001
-npm run gateway
 ```
 
-**Important:** You must run `npm run onboard` before starting the gateway. The gateway will not start without at least one agent configured.
+Onboarding walks you through: agent name + personality, LLM provider + model (fetched live from API), optional Telegram + Firecrawl keys. After it finishes, the gateway starts automatically and you pick how to connect:
 
-### 2. Interacting with Your Agent
+- **TUI** — terminal chat right there
+- **Control UI** — opens browser at `http://localhost:4001`
+- **Later** — gateway keeps running, connect manually
 
-You have three ways to chat with your agent:
-
-**A) CLI Chat (Recommended for Power Users)**
-
-For direct and fast interaction.
+## Commands
 
 ```bash
-# In a new terminal, while the gateway is running:
-cd backend
-npm run chat
+npm run onboard     # first-time setup, creates agent + .env
+npm run hatch       # start gateway + pick TUI or browser (skip onboarding)
+npm run gateway     # start gateway only
+npm run chat        # TUI chat (gateway must be running)
 ```
 
-**B) Web UI (Visual Office)**
+## How to Connect
 
-For a visual representation of your agents.
+| Interface | How |
+|-----------|-----|
+| TUI | `npm run chat` |
+| Control UI (chat + settings) | `http://localhost:4001` |
+| Visual Office (agent visualizer) | `cd frontend && npm run dev` → `http://localhost:3000` |
+| Telegram | configure token during onboarding, bot starts with gateway |
 
-```bash
-# In a new terminal:
-cd frontend
-npm run dev
+## Agent Files
+
+Each agent lives in `backend/agents/<id>/`:
+
+| File | Purpose |
+|------|---------|
+| `AGENT.md` | Config — LLM, tools, skills, channels |
+| `SOUL.md` | Personality and tone |
+| `MEMORY.md` | Long-term facts (weeks/months) |
+| `USER.md` | User profile, filled during bootstrap |
+| `BOOTSTRAP.md` | First-run ritual — agent interviews user, then self-deletes |
+| `TOOLS.md` | Tool reference for the agent |
+| `memory/YYYY-MM-DD.md` | Daily activity log |
+| `sessions/*.jsonl` | Conversation transcripts (source of truth) |
+
+## Tools Available to Agents
+
+**File system** — `read_file`, `write_file`, `list_directory`, `get_file_tree`, `search_files`, `search_codebase`  
+**Shell** — `shell_exec`  
+**Web** — `search_web`, `scrape_website`, `firecrawl_scrape`, `firecrawl_crawl`  
+**Memory** — `remember_fact`, `log_daily`, `search_memory`, `search_sessions`, `get_recent_activity`  
+**Multi-agent** — `delegate_task`, `ask_agent`, `broadcast_to_agents`  
+**Scheduling** — `schedule_cron`
+
+## In-chat Commands
+
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser. Your agent should appear in the office.
+/status          agent status + context usage
+/model           show or change model: /model openrouter/gpt-4o
+/clear           clear session context
+/configure       show integration status: /configure show
+/configure firecrawl <key>   set Firecrawl key live
+/agents          list all agents
+/switch <name>   switch to another agent
+/help            all commands
+```
 
-**C) Telegram**
+## Environment Variables
 
-If you configured a Telegram bot during onboarding, simply start a chat with your bot in the Telegram app.
+```env
+OPENROUTER_API_KEY=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+OLLAMA_ENDPOINT=http://localhost:11434   # optional
+FIRECRAWL_API_KEY=                       # optional
+TELEGRAM_BOT_TOKEN=                      # optional
+PORT=4001
+AGENTS_DIR=./agents
+```
 
-## 🔧 How It Works
+## Roadmap
 
-- **Agents**: Each agent is defined by a set of Markdown files in the `backend/agents/` directory (e.g., `AGENT.md`, `MEMORY.md`).
-- **Memory System**: Two-layer architecture with long-term memory (MEMORY.md) and daily logs (memory/*.md). Agents can search through memory and past conversations. See [MEMORY_GUIDE.md](./MEMORY_GUIDE.md) for details.
-- **Gateway**: A central Node.js server that handles WebSocket connections, API requests, and agent task execution.
-- **Tools**: Agents can use tools like `shell_exec`, `search_web`, `write_file`, `search_memory`, and more to interact with the environment.
-- **Sessions**: The system maintains separate conversation sessions for each channel (CLI, Web, Telegram).
-
-##  roadmap
-
-See [TODO.md](TODO.md) for the full project roadmap.
-
-## 🤝 Contributing
-
-This project is in active development. Contributions, issues, and feature requests are welcome!
+See [TODO.md](TODO.md).
